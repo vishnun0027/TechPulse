@@ -308,7 +308,7 @@ def tenants_list() -> None:
     db = _get_db()
     res = (
         db.table("tenant_profiles")
-        .select("user_id, slack_webhook_url, discord_webhook_url, created_at")
+        .select("user_id, email, role, slack_webhook_url, discord_webhook_url, created_at")
         .execute()
     )
     rows = res.data or []
@@ -319,6 +319,8 @@ def tenants_list() -> None:
 
     table = Table(title="Registered TechPulse Tenants", show_lines=True)
     table.add_column("User ID", style="cyan", no_wrap=True)
+    table.add_column("Email", style="bold")
+    table.add_column("Role", style="magenta", justify="center")
     table.add_column("Slack", style="dim", justify="center")
     table.add_column("Discord", style="dim", justify="center")
     table.add_column("Created At", style="dim")
@@ -326,8 +328,10 @@ def tenants_list() -> None:
     for r in rows:
         table.add_row(
             r["user_id"],
-            "" if r.get("slack_webhook_url") else "-",
-            "" if r.get("discord_webhook_url") else "-",
+            r.get("email", "N/A"),
+            r.get("role", "user"),
+            "✓" if r.get("slack_webhook_url") else "-",
+            "✓" if r.get("discord_webhook_url") else "-",
             str(r.get("created_at", ""))[:19],
         )
     console.print(table)
@@ -344,7 +348,7 @@ def tenants_stats() -> None:
 
     counts = defaultdict(lambda: {"total": 0, "delivered": 0})
     for r in rows:
-        uid = r["user_id"]
+        uid = r.get("user_id") or "Unknown"
         counts[uid]["total"] += 1
         if r.get("is_delivered"):
             counts[uid]["delivered"] += 1

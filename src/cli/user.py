@@ -129,9 +129,12 @@ def logout() -> None:
 @app.command("whoami")
 def whoami() -> None:
     """Show the currently authenticated user session details."""
-    session = _load_session()
+    client, session = _get_user_client()
+    res = client.table("tenant_profiles").select("role").eq("user_id", session["user_id"]).execute()
+    role = res.data[0].get("role", "user") if res.data else "user"
+    
     rprint(
-        f"[bold cyan]{session['email']}[/bold cyan]  [dim](uid: {session['user_id']})[/dim]"
+        f"[bold cyan]{session['email']}[/bold cyan]  [dim](uid: {session['user_id']})[/dim]  [magenta][{role}][/magenta]"
     )
 
 

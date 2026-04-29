@@ -217,6 +217,53 @@ def get_tenant_profiles() -> List[Dict[str, Any]]:
         return []
 
 
+def get_tenant_role(user_id: str) -> str:
+    """
+    Returns the RBAC role of a tenant.
+
+    Args:
+        user_id: The UUID of the tenant.
+
+    Returns:
+        str: One of 'admin', 'auditor', 'premium', 'user'. Defaults to 'user' on error.
+    """
+    try:
+        res = (
+            supabase.table("tenant_profiles")
+            .select("role")
+            .eq("user_id", user_id)
+            .single()
+            .execute()
+        )
+        return res.data.get("role", "user") if res.data else "user"
+    except Exception as e:
+        logger.error(f"Error fetching tenant role for {user_id}: {e}")
+        return "user"
+
+
+def get_premium_tenants() -> List[Dict[str, Any]]:
+    """
+    Returns tenant profiles for admin and premium users only.
+    Used by the pipeline to determine who gets advanced AI features
+    (e.g., custom scorer weights from app_config).
+
+    Returns:
+        List[Dict[str, Any]]: List of admin/premium tenant profiles.
+    """
+    try:
+        res = (
+            supabase.table("tenant_profiles")
+            .select("*")
+            .in_("role", ["admin", "premium"])
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        logger.error(f"Error fetching premium tenants: {e}")
+        return []
+
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=6))
 def update_source_delivery(source_urls: List[str], user_id: str) -> None:
     """
