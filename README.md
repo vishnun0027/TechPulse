@@ -98,7 +98,7 @@ uv run techpulse-ops run all
 
 ## ⚡ Command Line Power Tools
 
-TechPulse comes with two dedicated CLI tools.
+TechPulse comes with two dedicated CLI tools. For a detailed guide on how to configure your account, topics, and feeds across different user tiers, see the **[User Guide](USER_GUIDE.md)**.
 
 ### 🛠️ Operator CLI (`techpulse-ops`)
 For system-level management, orchestration, and automation.
