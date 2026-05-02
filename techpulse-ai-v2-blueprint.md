@@ -933,6 +933,6 @@ The TechPulse AI V2 backend engine is now **feature-complete and aligned**.
     - `/radar`: Trend visualization and source quality dashboard.
 - **Edge Deployment**: Deployment of Supabase Edge Functions for client-side query embedding (required for search).
 - **Infrastructure**: Update NVIDIA GPU drivers (currently version 12060 forces CPU usage; functional but slower).
-- **Feedback Loop**: Frontend buttons for 👍/👎 need to be wired to the `user_feedback` table.
+- **Feedback Loop**: Backend batch job for processing signals implemented; Frontend buttons for 👍/👎 need to be wired to the `user_feedback` table.
 
 ---

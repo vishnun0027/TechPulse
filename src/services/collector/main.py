@@ -11,7 +11,11 @@ from shared.redis_client import (
     mark_title_seen,
     push_to_stream,
 )
-from shared.db import log_telemetry, get_rss_sources, update_source_ingestion
+from shared.db import (
+    log_telemetry,
+    get_rss_sources,
+    update_source_ingestion,
+)
 from services.collector.filter import is_relevant
 
 
@@ -21,12 +25,8 @@ def collect() -> None:
 
     1. Fetches all active RSS sources from Supabase.
     2. Parses each feed for new entries.
-    3. Filters entries based on:
-       - Publication date (14-day freshness limit).
-       - Deduplication (seen URL or title).
-       - User-defined topic relevance.
-    4. Queues relevant articles into the Redis stream for summarization.
-    5. Records operational telemetry (noise ratio, source health).
+    3. Handles user-specific sources (Global fan-out is deprecated).
+    4. Filters entries and queues them for V2 semantic ranking.
     """
     logger.info("Starting collection...")
     total_queued: int = 0
@@ -38,11 +38,15 @@ def collect() -> None:
         days=settings.collection_interval_days
     )
 
-    # In a multi-tenant world, sources are associated with specific user_ids
     for src in sources:
         user_id = src.get("user_id")
+
+        # V2 Refactoring: Global Source Distribution (fan-out in collector) is not recommended
+        # for scalability. Sources must be associated with a specific tenant.
         if not user_id:
-            logger.debug(f"Source {src.get('name')} has no user_id, skipping.")
+            logger.debug(
+                f"Source '{src.get('name', 'Unknown')}' has no user_id. Skipping global fan-out."
+            )
             continue
 
         try:
@@ -51,7 +55,6 @@ def collect() -> None:
                 logger.warning(
                     f"No entries found or failed to parse feed: {src['url']}"
                 )
-                src["_success"] = False
                 continue
 
             # We only check the top 15 entries per source to keep runs fast
@@ -63,16 +66,13 @@ def collect() -> None:
                 # 1. Freshness Check
                 pub_date = entry.get("published_parsed")
                 if pub_date:
-                    # calendar.timegm() treats struct_time as UTC (unlike time.mktime
-                    # which uses local time and would be wrong on non-UTC servers).
                     dt = datetime.fromtimestamp(
                         calendar.timegm(pub_date), tz=timezone.utc
                     )
                     if dt < cutoff:
-                        logger.debug(f"Skipped (stale): {title[:40]}...")
                         continue
 
-                # 2. Deduplication Check
+                # 2. Deduplication Check (Per user)
                 if (
                     not url
                     or check_seen(url, user_id)
@@ -80,10 +80,11 @@ def collect() -> None:
                 ):
                     continue
 
-                # 3. Topic Relevance Check
+                # 3. Topic Relevance Check (Per user)
+                # Note: V2 uses a 'soft gate' - unmatched articles are allowed through
+                # for semantic ranking if they aren't explicitly blocked.
                 if not is_relevant(title, content, user_id):
                     total_skipped += 1
-                    logger.debug(f"Skipped (irrelevant): {title[:60]}")
                     continue
 
                 # 4. Queue for Summarization
@@ -105,39 +106,28 @@ def collect() -> None:
                     mark_title_seen(title, user_id)
                     update_source_ingestion(src.get("id"), user_id)
                     total_queued += 1
-                    logger.debug(f"Queued: {title[:60]}")
+                    logger.debug(f"Queued for {user_id}: {title[:40]}...")
 
                 except Exception as e:
-                    logger.error(f"Failed to push {url} to stream: {e}")
+                    logger.error(f"Failed to push to stream: {e}")
 
-            logger.info(f"[{src.get('name', 'Unknown')}] done for user {user_id}")
-            time.sleep(1)  # Polite pause between sources
+            logger.info(f"[{src.get('name', 'Unknown')}] done.")
+            time.sleep(0.5)  # Polite pause between sources
 
         except Exception as e:
             logger.error(f"[{src.get('name', 'Unknown')}] failed: {e}")
-            src["_success"] = False
 
     logger.success(
         f"Collection complete - {total_queued} queued, {total_skipped} skipped"
     )
 
-    # Calculate health metrics
-    total_sources = len(sources)
-    error_count = sum(1 for src in sources if not src.get("_success", True))
-
-    # Calculate noise_ratio (skipped vs total valid candidates found)
-    processed_count = total_queued + total_skipped
-    noise_ratio = round(
-        (total_skipped / processed_count * 100) if processed_count > 0 else 0, 1
-    )
-
-    # Record telemetry for the dashboard
+    # Record telemetry
     log_telemetry(
         "collector",
         {
-            "total_sources": total_sources,
-            "error_count": error_count,
-            "noise_ratio": noise_ratio,
+            "total_sources": len(sources),
+            "queued": total_queued,
+            "skipped": total_skipped,
         },
     )
 

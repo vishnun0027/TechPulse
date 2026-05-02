@@ -51,7 +51,7 @@ Analyze the article and return valid JSON only:
   "score": <float 0.0-10.0>,
   "summary": "<2-3 sentences of core technical takeaway>",
   "why_it_matters": "<1 sentence on specific urgency or impact>",
-  "topics": ["<emoji> <Category>", "<tag1>", "<tag2>"]
+  "topics": ["<Category>", "<tag1>", "<tag2>"]
 }}
 
 The FIRST topic in the list MUST be a concise category (e.g., 'Python', 'Rust', 'Cloud', 'AI Research') based on your analysis.
