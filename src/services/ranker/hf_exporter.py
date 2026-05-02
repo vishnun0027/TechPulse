@@ -34,8 +34,13 @@ def export_to_hf(repo_id: str, is_private: bool = True):
         # 2. Convert to DataFrame and then Parquet
         df = pd.DataFrame(data)
         
-        # Ensure dates are strings for parquet compatibility if needed, 
-        # but pandas handles ISO dates well.
+        # Ensure no duplicates in the archive (e.g. if multiple users saved the same article)
+        initial_count = len(df)
+        df.drop_duplicates(subset=["source_url"], keep="first", inplace=True)
+        final_count = len(df)
+        
+        if initial_count > final_count:
+            logger.info(f"Removed {initial_count - final_count} duplicate articles from export.")
         
         temp_file = "techpulse_intelligence_archive.parquet"
         df.to_parquet(temp_file, index=False)
