@@ -140,6 +140,11 @@ BEGIN
         ALTER TABLE article_events ADD COLUMN theme TEXT;
     END IF;
 
+    -- Ensure 'last_ingested_at' exists in source_health
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='source_health' AND column_name='last_ingested_at') THEN
+        ALTER TABLE source_health ADD COLUMN last_ingested_at TIMESTAMPTZ;
+    END IF;
+
     -- Migrate user_feedback from 'is_helpful' to 'signal' if needed
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_feedback' AND column_name='is_helpful') THEN
         ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS signal TEXT;
