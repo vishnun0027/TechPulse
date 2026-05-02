@@ -28,13 +28,15 @@ The collector runs concurrently across all active RSS sources listed in the `rss
 - **Source Health**: Captures metrics on ingestion vs delivery to auto-downgrade noisy feeds.
 
 ### 2. The Enrichment Engine (`Enricher`)
-- **Embeddings**: Uses Groq `nomic-embed-text` to generate 768-dimensional vectors.
-- **Semantic Deduplication**: Checks `pgvector` index via HNSW for near-identical matches to avoid "same story, multiple sources" spam.
-- **Novelty Scoring**: Calculates uniqueness against the user's historical feed.
+- **Embeddings**: Uses `sentence-transformers/all-mpnet-base-v2` (768-dim) for high-accuracy semantic representation.
+- **Neural Search API**: A serverless Supabase Edge Function (`/embed`) provides real-time query embedding via the Hugging Face Inference API.
+- **Semantic Deduplication**: Checks `pgvector` index via HNSW for near-identical matches (threshold: 0.92) to suppress redundant news.
+- **Novelty Scoring**: Calculates uniqueness against the user's historical feed using a recency-weighted similarity decay.
 
 ### 3. The Decide & Research Pipeline (`Ranker` & `Research Agent`)
-- **Scoring**: Combines base LLM relevance, novelty score, source quality, and explicit user feedback.
-- **Research Agent**: Utilizes context retrieval to provide historical insight, ultimately synthesizing a precise summary and extracting the "Why It Matters" takeaway.
+- **Scoring**: A weighted additive formula (Signals: Base LLM, Novelty, Source Quality, Topic Match, Priority Boost).
+- **Feedback Loop**: A dedicated processing service aggregates user signals (`clicked`, `dismissed`, `saved`) to update source quality scores in real-time.
+- **Research Agent**: A LangGraph node that retrieves historical user context from pgvector to synthesize a summary and extract the "Why It Matters" takeaway.
 
 ### 4. Distribution & Curation (`Composer` & `Delivery`)
 - **Dynamic Theming**: The Composer Agent assigns dynamic thematic groupings (e.g. "Generative AI", "Developer Tools") replacing hardcoded taxonomies.

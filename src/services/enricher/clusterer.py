@@ -62,7 +62,7 @@ def find_or_create_event(
             if len(old_centroid) != len(embedding):
                 logger.warning(
                     f"Centroid dimension mismatch ({len(old_centroid)} vs {len(embedding)}) "
-                    "for event {event_id} - resetting centroid to new embedding."
+                    f"for event {event_id} - resetting centroid to new embedding."
                 )
                 new_centroid = embedding
             else:

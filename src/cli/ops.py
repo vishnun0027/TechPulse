@@ -17,6 +17,7 @@ from loguru import logger
 from services.summarizer import main as summarizer_main
 from services.enricher import embedder, deduplicator, novelty, clusterer
 from services.ranker import scorer
+from services.ranker.feedback_processor import process_feedback_batch
 from services.agents.research_agent import build_research_agent
 from services.agents.composer_agent import compose_digest
 from services.collector.main import collect
@@ -55,9 +56,14 @@ def _get_db() -> Any:
     return supabase
 
 
-def get_active_users() -> list[str]:
-    """Fetches all registered user IDs from tenant profiles."""
+def get_active_users(include_admins: bool = False) -> list[str]:
+    """
+    Fetches registered user IDs from tenant profiles.
+    Admins are excluded by default from automated delivery.
+    """
     profiles = get_tenant_profiles()
+    if not include_admins:
+        return [p["user_id"] for p in profiles if not p.get("is_admin")]
     return [p["user_id"] for p in profiles]
 
 
@@ -95,7 +101,7 @@ async def process_article_v2(
 
     async with semaphore:
         try:
-            loop = asyncio.get_running_loop()  # Fixed: was deprecated get_event_loop()
+            loop = asyncio.get_running_loop()
 
             # ── Stage 2: Enrich (Semantic) ────────────────────────────────────
             embedding = await loop.run_in_executor(
@@ -116,20 +122,23 @@ async def process_article_v2(
             config = get_filter_config(user_id)
             quality = get_source_quality(article.get("source_id"), user_id)
 
-            # Real topic_match: compute intersection of article topics vs user profile
+            # Heuristic topic_match fallback
             article_topics = article.get("topics", [])
-            topic_match = _compute_topic_match(
-                article_topics, config.get("allowed", [])
-            )
-
-            # Real base_relevance: use the score the summarizer already computed.
-            # Fallback to 5.0 (neutral) if not yet scored.
-            db_score = article.get("score")
-            base_relevance = float(db_score) if db_score is not None else 5.0
-
-            # Priority boost: +1.0 if article has a user priority topic
+            allowed_topics = config.get("allowed", [])
             priority_topics = {t.lower() for t in config.get("priority", [])}
-            has_priority = any(t.lower() in priority_topics for t in article_topics)
+
+            if not article_topics and allowed_topics:
+                text = (title + " " + article.get("content", "")).lower()
+                matches = [t for t in allowed_topics if t.lower() in text]
+                topic_match = 0.8 if matches else 0.4
+                has_priority = any(t.lower() in priority_topics for t in matches)
+            else:
+                topic_match = _compute_topic_match(article_topics, allowed_topics)
+                has_priority = any(t.lower() in priority_topics for t in article_topics)
+
+            # Real base_relevance fallback
+            db_score = article.get("score")
+            base_relevance = float(db_score) if db_score is not None else 4.0
 
             signals = scorer.RankSignals(
                 base_relevance=base_relevance,
@@ -140,7 +149,7 @@ async def process_article_v2(
             )
             final_score = scorer.compute_final_score(signals)
 
-            # ── Stage 3.5: Early Rejection (Resource Saver) ───────────────────
+            # ── Stage 3.5: Early Rejection ───────────────────
             if final_score < settings.delivery_threshold:
                 rprint(
                     f"[dim]SKIP: Score too low ({final_score:.1f}) - dropping to save AI resources: {title[:40]}...[/dim]"
@@ -164,6 +173,7 @@ async def process_article_v2(
             db.table("articles").upsert(
                 {
                     "user_id": user_id,
+                    "source_id": article.get("source_id"),
                     "title": title,
                     "source_url": article.get("source_url"),
                     "source": article.get("source"),
@@ -218,13 +228,23 @@ def run_deliver() -> None:
     rprint("[green]Delivery finished.[/green]")
 
 
+@run_app.command("feedback-loop")
+def run_feedback_loop(
+    days: int = typer.Option(7, help="Number of days of feedback to process"),
+) -> None:
+    """Process user feedback signals and update source quality scores."""
+    console.rule("[bold blue]Feedback Loop Service")
+    process_feedback_batch(days=days)
+    rprint("[green]Feedback processing finished.[/green]")
+
+
 async def _run_all_async() -> None:
     """Internal async orchestrator for the full V2 pipeline."""
     console.rule("[bold cyan]TechPulse AI V2 Pipeline Orchestration")
 
     GROQ_API_KEY = settings.groq_api_key
     db = _get_db()
-    loop = asyncio.get_running_loop()  # Fixed: deprecated get_event_loop()
+    loop = asyncio.get_running_loop()
 
     # ── Stage 1: Collect ──────────────────────────────────────────────────────
     ensure_group_exists(summarizer_main.GROUP_NAME)
@@ -259,7 +279,10 @@ async def _run_all_async() -> None:
 
     # ── Stage 6: Compose + Deliver ────────────────────────────────────────────
     console.rule("[dim]Stage 6: Multi-Channel Delivery", align="left")
-    for user_id in get_active_users():
+    # Only deliver to non-admin active users
+    delivery_targets = get_active_users(include_admins=False)
+
+    for user_id in delivery_targets:
         digest = await loop.run_in_executor(
             None, compose_digest, db, summarizer_main.get_llm(), user_id
         )
@@ -308,7 +331,9 @@ def tenants_list() -> None:
     db = _get_db()
     res = (
         db.table("tenant_profiles")
-        .select("user_id, email, role, slack_webhook_url, discord_webhook_url, created_at")
+        .select(
+            "user_id, email, role, slack_webhook_url, discord_webhook_url, created_at"
+        )
         .execute()
     )
     rows = res.data or []

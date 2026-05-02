@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS article_events (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id           UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     title             TEXT NOT NULL,
+    theme             TEXT,                      -- e.g. "Generative AI", "Regulation"
     description       TEXT,
     centroid_embedding vector(768),
     article_count     INT DEFAULT 1,
@@ -98,7 +99,9 @@ CREATE TABLE IF NOT EXISTS user_feedback (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     article_id  UUID REFERENCES articles(id) ON DELETE CASCADE,
-    is_helpful  BOOLEAN NOT NULL,
+    signal      TEXT NOT NULL CHECK (signal IN (
+                  'clicked','saved','dismissed','more_like_this','less_like_this'
+                )),
     comment     TEXT,
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
@@ -124,27 +127,67 @@ CREATE TABLE IF NOT EXISTS telemetry (
     timestamp   TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. INDEXES
+-- 4. ROBUSTNESS: Ensure new columns exist in existing tables
+DO $$ 
+BEGIN
+    -- Ensure 'theme' exists in articles
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='articles' AND column_name='theme') THEN
+        ALTER TABLE articles ADD COLUMN theme TEXT;
+    END IF;
+
+    -- Ensure 'theme' exists in article_events
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='article_events' AND column_name='theme') THEN
+        ALTER TABLE article_events ADD COLUMN theme TEXT;
+    END IF;
+
+    -- Migrate user_feedback from 'is_helpful' to 'signal' if needed
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_feedback' AND column_name='is_helpful') THEN
+        ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS signal TEXT;
+        UPDATE user_feedback SET signal = CASE WHEN is_helpful THEN 'clicked' ELSE 'dismissed' END WHERE signal IS NULL;
+        ALTER TABLE user_feedback ALTER COLUMN signal SET NOT NULL;
+        ALTER TABLE user_feedback DROP COLUMN is_helpful;
+    END IF;
+END $$;
+
+-- 5. INDEXES (HNSW for high-performance vector search)
 CREATE INDEX IF NOT EXISTS idx_articles_user_id      ON articles(user_id);
 CREATE INDEX IF NOT EXISTS idx_articles_score        ON articles(score DESC);
 CREATE INDEX IF NOT EXISTS idx_articles_theme        ON articles(theme);
 CREATE INDEX IF NOT EXISTS idx_articles_created_at   ON articles(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_articles_embedding    ON articles USING ivfflat (embedding vector_cosine_ops);
-CREATE INDEX IF NOT EXISTS idx_events_centroid       ON article_events USING ivfflat (centroid_embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp   ON telemetry(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_rss_sources_user_id   ON rss_sources(user_id);
 
--- 5. TRIGGERS
+-- Drop old IVFFlat indexes if they exist
+DROP INDEX IF EXISTS idx_articles_embedding;
+DROP INDEX IF EXISTS idx_events_centroid;
+
+-- HNSW: Significantly faster retrieval than IVFFlat for V2 scale
+CREATE INDEX IF NOT EXISTS idx_articles_embedding_hnsw
+  ON articles USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
+
+CREATE INDEX IF NOT EXISTS idx_events_centroid_hnsw
+  ON article_events USING hnsw (centroid_embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
+
+-- 6. TRIGGERS (IDEMPOTENT)
+DROP TRIGGER IF EXISTS update_tenant_profiles_updated_at ON tenant_profiles;
 CREATE TRIGGER update_tenant_profiles_updated_at BEFORE UPDATE ON tenant_profiles
     FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_rss_sources_updated_at ON rss_sources;
 CREATE TRIGGER update_rss_sources_updated_at BEFORE UPDATE ON rss_sources
     FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_article_events_updated_at ON article_events;
 CREATE TRIGGER update_article_events_updated_at BEFORE UPDATE ON article_events
     FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_app_config_updated_at ON app_config;
 CREATE TRIGGER update_app_config_updated_at BEFORE UPDATE ON app_config
     FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
 
--- 6. RPC FUNCTIONS
+-- 7. RPC FUNCTIONS
 
 -- Semantic search per user
 CREATE OR REPLACE FUNCTION match_articles(
@@ -163,6 +206,28 @@ $$;
 CREATE OR REPLACE FUNCTION is_near_duplicate(query_embedding vector(768), dup_threshold float, p_user_id uuid)
 RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (SELECT 1 FROM articles WHERE user_id = p_user_id AND embedding IS NOT NULL AND 1 - (embedding <=> query_embedding) >= dup_threshold);
+$$;
+
+-- Recency-weighted similarity (fuses content similarity with freshness)
+-- novelty = similarity_score * exp(-decay_rate * days_since_publication)
+CREATE OR REPLACE FUNCTION match_articles_recency(
+  query_embedding  vector(768),
+  match_count      int,
+  p_user_id        uuid,
+  decay_rate       float DEFAULT 0.15
+)
+RETURNS TABLE (id uuid, title text, summary text, recency_score float)
+LANGUAGE sql STABLE AS $$
+  SELECT
+    id, title, summary,
+    (1 - (embedding <=> query_embedding))
+      * exp(-decay_rate * EXTRACT(EPOCH FROM (now() - COALESCE(published_at, created_at))) / 86400)
+    AS recency_score
+  FROM articles
+  WHERE user_id = p_user_id
+    AND embedding IS NOT NULL
+  ORDER BY recency_score DESC
+  LIMIT match_count;
 $$;
 
 -- Atomic increment for source ingestion tracking
@@ -206,7 +271,7 @@ LANGUAGE sql STABLE AS $$
   ORDER BY similarity DESC LIMIT 5;
 $$;
 
--- 7. ROW LEVEL SECURITY (RLS)
+-- 8. ROW LEVEL SECURITY (RLS)
 ALTER TABLE tenant_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rss_sources ENABLE ROW LEVEL SECURITY;
@@ -216,12 +281,27 @@ ALTER TABLE source_health ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_feedback ENABLE ROW LEVEL SECURITY;
 ALTER TABLE telemetry ENABLE ROW LEVEL SECURITY;
 
--- Standard tenant isolation policies
+-- Standard tenant isolation policies (IDEMPOTENT)
+DROP POLICY IF EXISTS "Tenant isolation - Profiles" ON tenant_profiles;
 CREATE POLICY "Tenant isolation - Profiles" ON tenant_profiles FOR ALL USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Tenant isolation - Sources" ON rss_sources;
 CREATE POLICY "Tenant isolation - Sources"  ON rss_sources     FOR ALL USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Tenant isolation - Articles" ON articles;
 CREATE POLICY "Tenant isolation - Articles" ON articles        FOR ALL USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Tenant isolation - Events" ON article_events;
 CREATE POLICY "Tenant isolation - Events"   ON article_events   FOR ALL USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Tenant isolation - Config" ON app_config;
 CREATE POLICY "Tenant isolation - Config"   ON app_config      FOR ALL USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Tenant isolation - Stats" ON source_health;
 CREATE POLICY "Tenant isolation - Stats"    ON source_health   FOR ALL USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Tenant isolation - Feedback" ON user_feedback;
 CREATE POLICY "Tenant isolation - Feedback" ON user_feedback   FOR ALL USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Tenant isolation - Telemetry" ON telemetry;
 CREATE POLICY "Tenant isolation - Telemetry" ON telemetry      FOR ALL USING (auth.uid() = user_id);

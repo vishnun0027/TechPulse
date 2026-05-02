@@ -1,5 +1,6 @@
 import time
 from typing import List, Dict, Any, Optional
+from loguru import logger
 from shared.db import get_filter_config
 
 # Cache the config for 5 minutes during a run per user to reduce DB hits
@@ -52,29 +53,22 @@ def is_relevant(title: str, content: str = "", user_id: Optional[str] = None) ->
     """
     Determines if an article is relevant to a user based on their allowed/blocked topics.
 
-    Args:
-        title: Article title.
-        content: Article summary or full content snippets.
-        user_id: The tenant ID to fetch config for.
-
-    Returns:
-        bool: True if the article passes the filter, False otherwise.
+    In V2, this acts as a 'soft gate':
+    1. STRICTLY blocks content matching user 'blocked' keywords.
+    2. Allows everything else through to the queue for semantic evaluation by the Ranker.
     """
     config = get_cached_config(user_id)
-    allowed = config.get("allowed", [])
     blocked = config.get("blocked", [])
 
     # We check both title and the first 300 chars of content
     text = (title + " " + content[:300]).lower()
 
     # 1. Block irrelevant content first (Strict)
-    if any(b.lower() in text for b in blocked):
+    if any(b.lower() in text for b in blocked if b):
+        logger.info(f"Collector BLOCK: {title[:40]}... (matched blocked keyword)")
         return False
 
-    # 2. If no allowed topics configured (e.g. new user), allow all content.
-    #    Prevents new users from getting a silent empty digest on first run.
-    if not allowed:
-        return True
-
-    # 3. Must match at least one allowed topic.
-    return any(t.lower() in text for t in allowed)
+    # 2. V2 Strategy: Let everything through for the Ranker to evaluate.
+    # Simple keyword matching is too restrictive for an AI-powered pipeline.
+    # The Ranker will compute a proper score using embeddings.
+    return True

@@ -71,12 +71,13 @@ def test_is_relevant_blocks_keyword(mocker):
     assert is_relevant("Crypto price spike") is False
 
 
-def test_is_relevant_rejects_unmatched(mocker):
+def test_is_relevant_allows_unmatched_v2(mocker):
+    """In V2, unmatched topics are allowed through for semantic evaluation by the Ranker."""
     mocker.patch(
         "services.collector.filter.get_cached_config",
         return_value={"allowed": ["ai", "python"], "blocked": []},
     )
-    assert is_relevant("Random cooking article") is False
+    assert is_relevant("Random cooking article") is True
 
 
 def test_is_relevant_allows_all_when_no_topics(mocker):

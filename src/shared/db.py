@@ -263,7 +263,6 @@ def get_premium_tenants() -> List[Dict[str, Any]]:
         return []
 
 
-
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=6))
 def update_source_delivery(source_urls: List[str], user_id: str) -> None:
     """
