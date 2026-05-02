@@ -18,6 +18,7 @@ from services.summarizer import main as summarizer_main
 from services.enricher import embedder, deduplicator, novelty, clusterer
 from services.ranker import scorer
 from services.ranker.feedback_processor import process_feedback_batch
+from services.ranker.hf_exporter import export_to_hf
 from services.agents.research_agent import build_research_agent
 from services.agents.composer_agent import compose_digest
 from services.collector.main import collect
@@ -236,6 +237,17 @@ def run_feedback_loop(
     console.rule("[bold blue]Feedback Loop Service")
     process_feedback_batch(days=days)
     rprint("[green]Feedback processing finished.[/green]")
+
+
+@run_app.command("hf-export")
+def run_hf_export(
+    repo_id: str = typer.Option(..., help="Hugging Face repository ID (e.g. 'user/dataset')"),
+    private: bool = typer.Option(True, help="Whether to keep the dataset private"),
+) -> None:
+    """Export processed intelligence data to a Hugging Face dataset."""
+    console.rule("[bold blue]Hugging Face Export Service")
+    export_to_hf(repo_id=repo_id, is_private=private)
+    rprint("[green]Export finished.[/green]")
 
 
 async def _run_all_async() -> None:

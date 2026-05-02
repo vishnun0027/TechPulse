@@ -2,12 +2,15 @@ name: TechPulse AI Intelligence Pipeline
 
 on:
   schedule:
-    # Run every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
+    # Run intelligence pipeline every 6 hours
     - cron: '0 */6 * * *'
+    # Run weekly Hugging Face export every Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
 jobs:
   run-pipeline:
+    if: github.event.schedule != '0 0 * * 0'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -43,3 +46,33 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: uv run techpulse-ops run feedback-loop --days 1
+
+  weekly-hf-export:
+    if: github.event.schedule == '0 0 * * 0' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        run: uv sync --frozen
+
+      - name: Export to Hugging Face
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          # Replace 'your-username/techpulse-intelligence' with your preferred repo ID
+          uv run techpulse-ops run hf-export --repo-id "${{ secrets.HF_REPO_ID || 'vishnun0027/techpulse-intelligence' }}" --private
