@@ -10,7 +10,7 @@ on:
 
 jobs:
   run-pipeline:
-    if: github.event.schedule != '0 0 * * 0'
+    if: github.event.schedule != '0 0 * * 0' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -74,8 +74,6 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
-          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PYTHONPATH: src
         run: |

@@ -188,6 +188,7 @@ async def process_article_v2(
                     "summary": result["summary"],
                     "why_it_matters": result["why_it_matters"],
                     "topics": result.get("topics", []),
+                    "published_at": article.get("published_at") or None,
                     "v2_processed": True,
                 }
             )

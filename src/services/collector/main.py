@@ -107,11 +107,13 @@ def collect() -> None:
 
                     # Freshness check
                     pub_date = entry.get("published_parsed") or entry.get("updated_parsed")
+                    pub_date_iso: str | None = None
                     if pub_date:
                         dt = datetime.fromtimestamp(calendar.timegm(pub_date), tz=timezone.utc)
                         if dt < cutoff:
                             logger.debug(f"SKIP (Old): {title[:30]}...")
                             continue
+                        pub_date_iso = dt.isoformat()
 
                     if not link or check_seen(link, user_id) or check_title_seen(title, user_id):
                         continue
@@ -122,7 +124,8 @@ def collect() -> None:
 
                     push_to_stream({
                         "user_id": user_id, "title": title, "source_url": link,
-                        "source": source_name, "source_id": src.get("id"), "content": content
+                        "source": source_name, "source_id": src.get("id"), "content": content,
+                        "published_at": pub_date_iso or "",
                     })
                     mark_seen(link, user_id)
                     mark_title_seen(title, user_id)
