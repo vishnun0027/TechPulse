@@ -80,7 +80,7 @@ def process_feedback_batch(days: int = 7):
             logger.info("No valid feedback to aggregate.")
             return
 
-        # 4. Update
+    # 4. Update (Ensure using updated_at for V2 schema)
         for (user_id, source_id), counts in aggregates.items():
             res_health = (
                 supabase.table("source_health")
