@@ -36,6 +36,8 @@ dependencies = [
     "huggingface-hub>=0.28.1",
     "pandas>=2.2.0",
     "pyarrow>=15.0.0",
+    "brotli>=1.2.0",
+    "zstandard>=0.25.0",
 ]
 
 [project.scripts]

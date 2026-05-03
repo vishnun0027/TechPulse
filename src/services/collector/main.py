@@ -28,6 +28,7 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0"
 ]
 
+
 def collect() -> None:
     logger.info("Starting collection...")
     total_queued: int = 0
@@ -41,31 +42,60 @@ def collect() -> None:
             source_name = src.get("name", "Unknown")
             url = src["url"]
 
-            # Surgical Fix: Standardize ArXiv to use their bot-friendly API
-            if "arxiv.org/rss/" in url:
-                category = url.split("/")[-1]
-                url = f"https://export.arxiv.org/api/query?search_query=cat:{category}&sortBy=submittedDate&sortOrder=descending"
-
             if not user_id:
                 continue
 
             try:
-                # Rotate headers to look human
+                # Advanced browser-mimicry headers
                 headers = {
                     "User-Agent": random.choice(USER_AGENTS),
-                    "Accept": "application/xml,text/xml,application/xhtml+xml,text/html;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                     "Accept-Language": "en-US,en;q=0.5",
-                    "Referer": "https://www.google.com/",
+                    "Accept-Encoding": "gzip, deflate, br",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
                 }
 
-                response = client.get(url, headers=headers)
+                # Robust fetching with multiple fallbacks:
+                # 1. Try HTTP/2 (modern, efficient)
+                # 2. Try HTTP/1.1 (fallback for protocol errors)
+                # 3. Try without SSL verification (last resort for environment-specific CA issues)
+                response = None
+                try:
+                    with httpx.Client(http2=True, timeout=20.0, follow_redirects=True) as local_client:
+                        response = local_client.get(url, headers=headers)
+                except (httpx.ProtocolError, httpx.RemoteProtocolError):
+                    logger.debug(f"[{source_name}] HTTP/2 failed, retrying with HTTP/1.1")
+                    with httpx.Client(http2=False, timeout=20.0, follow_redirects=True) as local_client:
+                        response = local_client.get(url, headers=headers)
+                except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                    if "CERTIFICATE_VERIFY_FAILED" in str(e):
+                        logger.warning(f"[{source_name}] SSL verify failed, retrying without verification")
+                        with httpx.Client(http2=False, timeout=20.0, follow_redirects=True, verify=False) as local_client:
+                            response = local_client.get(url, headers=headers)
+                    else:
+                        raise e
+
+                if not response:
+                    logger.error(f"[{source_name}] No response received.")
+                    continue
+
+                if response.status_code == 403:
+                    logger.warning(f"[{source_name}] 403 Forbidden. Skipping: {url}")
+                    continue
+
                 response.raise_for_status()
-                
-                feed = feedparser.parse(response.text)
-                
+
+                # Robust decoding: handle auto-decompression results
+                feed_text = response.text
+                if not feed_text and response.content:
+                    feed_text = response.content.decode("utf-8", errors="replace")
+
+                feed = feedparser.parse(feed_text)
+
                 # Snapshot debugger for failed parses
                 if not feed.entries:
-                    snippet = response.text[:200].replace("\n", " ").strip()
+                    snippet = feed_text[:200].replace("\n", " ").strip()
                     logger.warning(f"[{source_name}] No entries found. Body starts with: {snippet}")
                     continue
 
@@ -100,13 +130,14 @@ def collect() -> None:
                     total_queued += 1
 
                 logger.info(f"[{source_name}] done.")
-                time.sleep(random.uniform(2.0, 5.0)) # Random jitter to look human
+                time.sleep(random.uniform(3.0, 7.0))  # Jitter to look human
 
             except Exception as e:
                 logger.error(f"[{source_name}] failed: {e}")
 
     logger.success(f"Collection complete - {total_queued} queued, {total_skipped} skipped")
     log_telemetry("collector", {"total_sources": len(sources), "queued": total_queued, "skipped": total_skipped})
+
 
 if __name__ == "__main__":
     collect()
