@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS articles (
     v2_processed     BOOLEAN DEFAULT FALSE,
     published_at     TIMESTAMPTZ,
     created_at       TIMESTAMPTZ DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ DEFAULT NOW(),
     CONSTRAINT articles_source_url_userid_key UNIQUE (source_url, user_id)
 );
 
@@ -90,7 +91,7 @@ CREATE TABLE IF NOT EXISTS source_health (
     duplicate_rate    FLOAT DEFAULT 0.0,
     quality_score     FLOAT DEFAULT 0.5,
     last_ingested_at  TIMESTAMPTZ,
-    last_updated      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (source_id, user_id)
 );
 
@@ -103,7 +104,8 @@ CREATE TABLE IF NOT EXISTS user_feedback (
                   'clicked','saved','dismissed','more_like_this','less_like_this'
                 )),
     comment     TEXT,
-    created_at  TIMESTAMPTZ DEFAULT NOW()
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- App Config: Personalized AI pipeline settings
@@ -130,33 +132,55 @@ CREATE TABLE IF NOT EXISTS telemetry (
 -- 4. ROBUSTNESS: Ensure new columns exist in existing tables
 DO $$ 
 BEGIN
-    -- Ensure 'theme' exists in articles
+    -- ── articles ──
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='articles' AND column_name='theme') THEN
         ALTER TABLE articles ADD COLUMN theme TEXT;
     END IF;
-
-    -- Ensure 'theme' exists in article_events
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='article_events' AND column_name='theme') THEN
-        ALTER TABLE article_events ADD COLUMN theme TEXT;
-    END IF;
-
-    -- Ensure 'source_id' exists in articles
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='articles' AND column_name='source_id') THEN
         ALTER TABLE articles ADD COLUMN source_id BIGINT REFERENCES rss_sources(id) ON DELETE SET NULL;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='articles' AND column_name='updated_at') THEN
+        ALTER TABLE articles ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();
+    END IF;
 
-    -- Ensure 'last_ingested_at' exists in source_health
+    -- ── article_events ──
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='article_events' AND column_name='theme') THEN
+        ALTER TABLE article_events ADD COLUMN theme TEXT;
+    END IF;
+    -- Unify last_updated -> updated_at
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='article_events' AND column_name='last_updated') AND
+       NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='article_events' AND column_name='updated_at') THEN
+        ALTER TABLE article_events RENAME COLUMN last_updated TO updated_at;
+    ELSIF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='article_events' AND column_name='updated_at') THEN
+        ALTER TABLE article_events ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();
+    END IF;
+
+    -- ── source_health ──
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='source_health' AND column_name='last_ingested_at') THEN
         ALTER TABLE source_health ADD COLUMN last_ingested_at TIMESTAMPTZ;
     END IF;
+    -- Unify last_updated -> updated_at
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='source_health' AND column_name='last_updated') AND
+       NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='source_health' AND column_name='updated_at') THEN
+        ALTER TABLE source_health RENAME COLUMN last_updated TO updated_at;
+    ELSIF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='source_health' AND column_name='updated_at') THEN
+        ALTER TABLE source_health ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();
+    END IF;
 
-    -- Migrate user_feedback from 'is_helpful' to 'signal' if needed
+    -- ── user_feedback ──
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_feedback' AND column_name='updated_at') THEN
+        ALTER TABLE user_feedback ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();
+    END IF;
+    -- Migrate 'is_helpful' -> 'signal'
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_feedback' AND column_name='is_helpful') THEN
         ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS signal TEXT;
         UPDATE user_feedback SET signal = CASE WHEN is_helpful THEN 'clicked' ELSE 'dismissed' END WHERE signal IS NULL;
         ALTER TABLE user_feedback ALTER COLUMN signal SET NOT NULL;
         ALTER TABLE user_feedback DROP COLUMN is_helpful;
     END IF;
+
+    -- Reload PostgREST schema cache
+    NOTIFY pgrst, 'reload schema';
 END $$;
 
 -- 5. INDEXES (HNSW for high-performance vector search)
@@ -197,6 +221,14 @@ DROP TRIGGER IF EXISTS update_app_config_updated_at ON app_config;
 CREATE TRIGGER update_app_config_updated_at BEFORE UPDATE ON app_config
     FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_articles_updated_at ON articles;
+CREATE TRIGGER update_articles_updated_at BEFORE UPDATE ON articles
+    FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_user_feedback_updated_at ON user_feedback;
+CREATE TRIGGER update_user_feedback_updated_at BEFORE UPDATE ON user_feedback
+    FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+
 -- 7. RPC FUNCTIONS
 
 -- Semantic search per user
@@ -219,7 +251,6 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
 $$;
 
 -- Recency-weighted similarity (fuses content similarity with freshness)
--- novelty = similarity_score * exp(-decay_rate * days_since_publication)
 CREATE OR REPLACE FUNCTION match_articles_recency(
   query_embedding  vector(768),
   match_count      int,
@@ -244,20 +275,19 @@ $$;
 CREATE OR REPLACE FUNCTION increment_source_ingestion(p_source_id bigint, p_user_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
-    INSERT INTO source_health (source_id, user_id, articles_ingested)
-    VALUES (p_source_id, p_user_id, 1)
+    INSERT INTO source_health (source_id, user_id, articles_ingested, updated_at)
+    VALUES (p_source_id, p_user_id, 1, now())
     ON CONFLICT (source_id, user_id)
-    DO UPDATE SET articles_ingested = source_health.articles_ingested + 1, last_ingested_at = now();
+    DO UPDATE SET articles_ingested = source_health.articles_ingested + 1, updated_at = now();
 END;
 $$;
 
 -- Atomic increment for article click tracking (called from the frontend)
--- Updates quality_score = articles_clicked / articles_delivered in real time.
 CREATE OR REPLACE FUNCTION increment_source_click(p_source_id bigint, p_user_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
-    INSERT INTO source_health (source_id, user_id, articles_clicked, articles_delivered, quality_score)
-    VALUES (p_source_id, p_user_id, 1, 0, 0.5)
+    INSERT INTO source_health (source_id, user_id, articles_clicked, articles_delivered, quality_score, updated_at)
+    VALUES (p_source_id, p_user_id, 1, 0, 0.5, now())
     ON CONFLICT (source_id, user_id)
     DO UPDATE SET
         articles_clicked = source_health.articles_clicked + 1,
@@ -268,7 +298,7 @@ BEGIN
                 ELSE 0.5
             END
         )),
-        last_updated = now();
+        updated_at = now();
 END;
 $$;
 

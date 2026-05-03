@@ -48,11 +48,14 @@ def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
     parser = JsonOutputParser(pydantic_object=ArticleAnalysis)
 
     history_context = ""
-    if state.get("similar_history"):
+    # Ensure similar_history only contains valid dicts
+    valid_history = [r for r in state.get("similar_history", []) if isinstance(r, dict)]
+
+    if valid_history:
         history_context = "\n".join(
             [
                 f"- [{r.get('published_at', 'recent')[:10]}] {r.get('title', 'Untitled')}: {r.get('why_it_matters', (r.get('summary') or '')[:120])}"
-                for r in state["similar_history"]
+                for r in valid_history
             ]
         )
 

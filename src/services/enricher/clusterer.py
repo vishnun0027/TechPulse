@@ -1,6 +1,7 @@
 from supabase import Client
 from loguru import logger
 import uuid
+import json
 
 
 # articles above this cosine similarity join the same event cluster
@@ -14,6 +15,20 @@ def _truncate_event_title(title: str, max_words: int = 8) -> str:
     if len(words) > max_words:
         truncated += "…"
     return truncated
+
+
+def _parse_embedding(embedding: any) -> list[float]:
+    """Parses an embedding that might be returned as a string by some Supabase client/PostgREST versions."""
+    if isinstance(embedding, list):
+        return embedding
+    if isinstance(embedding, str):
+        try:
+            # Handle standard list-string format "[0.1, 0.2, ...]"
+            return json.loads(embedding)
+        except Exception:
+            # Handle possible alternate formats (space separated etc) if needed
+            logger.warning(f"Failed to parse embedding string: {embedding[:50]}...")
+    return []
 
 
 def find_or_create_event(
@@ -45,7 +60,6 @@ def find_or_create_event(
             # Update centroid using a running (incremental) average:
             #   new_centroid[i] = (old[i] * n + new[i]) / (n + 1)
             # This keeps the centroid representative as the cluster grows.
-            # We fetch the current centroid first for the calculation.
             centroid_res = (
                 supabase.table("article_events")
                 .select("centroid_embedding")
@@ -53,9 +67,8 @@ def find_or_create_event(
                 .execute()
             )
 
-            old_centroid = (centroid_res.data or [{}])[0].get(
-                "centroid_embedding"
-            ) or embedding
+            raw_centroid = (centroid_res.data or [{}])[0].get("centroid_embedding")
+            old_centroid = _parse_embedding(raw_centroid) or embedding
             n = current_count
 
             # Guard against dimension mismatch (e.g. after a model change)
@@ -88,7 +101,6 @@ def find_or_create_event(
         )
 
     # Fallback: create a new event using a truncated article title.
-    # Deliberately no LLM call here - saves ~40 Groq API calls per pipeline run.
     try:
         event_title = _truncate_event_title(article_title)
         new_event = (
