@@ -17,7 +17,7 @@ from loguru import logger
 from services.summarizer import main as summarizer_main
 from services.enricher import embedder, deduplicator, novelty, clusterer
 from services.ranker import scorer
-from services.ranker.feedback_processor import process_feedback_batch
+from services.ranker.feedback_processor import process_feedback_batch_v2
 from services.ranker.hf_exporter import export_to_hf
 from services.agents.research_agent import build_research_agent
 from services.agents.composer_agent import compose_digest
@@ -235,7 +235,7 @@ def run_feedback_loop(
 ) -> None:
     """Process user feedback signals and update source quality scores."""
     console.rule("[bold blue]Feedback Loop Service")
-    process_feedback_batch(days=days)
+    process_feedback_batch_v2(days=days)
     rprint("[green]Feedback processing finished.[/green]")
 
 

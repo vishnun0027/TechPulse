@@ -25,10 +25,11 @@ def get_source_id_map(user_ids: List[str]) -> Dict[Any, Any]:
     return source_map
 
 
-def process_feedback_batch(days: int = 7):
+def process_feedback_batch_v2(days: int = 7):
     """
     Processes user feedback from the specified period and updates source health quality scores.
     """
+    logger.critical("!!! FEEDBACK LOOP V2 EXECUTING !!!")
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     logger.info(f"Processing user feedback since {cutoff}...")
 
