@@ -88,7 +88,7 @@ def find_or_create_event(
                 {
                     "article_count": n + 1,
                     "centroid_embedding": new_centroid,
-                    "last_updated": "now()",
+                    "updated_at": "now()",
                 }
             ).eq("id", event_id).execute()
 

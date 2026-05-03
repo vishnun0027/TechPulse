@@ -117,7 +117,7 @@ def process_feedback_batch(days: int = 7):
                     "articles_clicked": new_clicked,
                     "articles_delivered": new_delivered,
                     "quality_score": new_quality,
-                    "last_updated": "now()",
+                    "updated_at": "now()",
                 }
             ).eq("user_id", user_id).eq("source_id", source_id).execute()
 

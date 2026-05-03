@@ -317,7 +317,7 @@ def update_source_delivery(source_urls: List[str], user_id: str) -> None:
                     {
                         "articles_delivered": new_delivered,
                         "quality_score": new_quality,
-                        "last_updated": "now()",
+                        "updated_at": "now()",
                     }
                 ).eq("source_id", source_id).eq("user_id", user_id).execute()
             else:
