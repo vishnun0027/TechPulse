@@ -25,11 +25,10 @@ def get_source_id_map(user_ids: List[str]) -> Dict[Any, Any]:
     return source_map
 
 
-def process_feedback_batch_v2(days: int = 7):
+def process_feedback_batch(days: int = 7):
     """
     Processes user feedback from the specified period and updates source health quality scores.
     """
-    logger.critical("!!! FEEDBACK LOOP V2 EXECUTING !!!")
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     logger.info(f"Processing user feedback since {cutoff}...")
 
@@ -113,7 +112,6 @@ def process_feedback_batch_v2(days: int = 7):
             denom = max(new_delivered, 1)
             new_quality = round(min(new_clicked / denom, 1.0), 4)
 
-            logger.debug(f"Updating source_health with updated_at for source_id={source_id}")
             supabase.table("source_health").update(
                 {
                     "articles_clicked": new_clicked,
