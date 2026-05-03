@@ -140,6 +140,11 @@ BEGIN
         ALTER TABLE article_events ADD COLUMN theme TEXT;
     END IF;
 
+    -- Ensure 'source_id' exists in articles
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='articles' AND column_name='source_id') THEN
+        ALTER TABLE articles ADD COLUMN source_id BIGINT REFERENCES rss_sources(id) ON DELETE SET NULL;
+    END IF;
+
     -- Ensure 'last_ingested_at' exists in source_health
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='source_health' AND column_name='last_ingested_at') THEN
         ALTER TABLE source_health ADD COLUMN last_ingested_at TIMESTAMPTZ;
