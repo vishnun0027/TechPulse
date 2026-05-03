@@ -171,7 +171,9 @@ async def process_article_v2(
             )
 
             # ── Stage 5: Save ─────────────────────────────────────────────────
-            db.table("articles").upsert(
+            from shared.db import save_article
+
+            save_success = save_article(
                 {
                     "user_id": user_id,
                     "source_id": article.get("source_id"),
@@ -187,9 +189,12 @@ async def process_article_v2(
                     "why_it_matters": result["why_it_matters"],
                     "topics": result.get("topics", []),
                     "v2_processed": True,
-                },
-                on_conflict="source_url,user_id",
-            ).execute()
+                }
+            )
+
+            if not save_success:
+                logger.error(f"Failed to save processed article: {title}")
+                return False
 
             acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
             rprint(f"[green]Processed: {title[:50]}... [Score: {final_score}][/green]")

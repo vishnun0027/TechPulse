@@ -20,10 +20,14 @@ class ResearchState(TypedDict):
     topics: List[str]
 
 
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 def retrieve_history(state: ResearchState, supabase: Client) -> ResearchState:
     """Node 1: Pull top-3 related articles from Supabase pgvector."""
-    try:
-        result = supabase.rpc(
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=6))
+    def _execute_rpc():
+        return supabase.rpc(
             "match_articles",
             {
                 "query_embedding": state["embedding"],
@@ -32,6 +36,9 @@ def retrieve_history(state: ResearchState, supabase: Client) -> ResearchState:
                 "p_user_id": state["user_id"],
             },
         ).execute()
+
+    try:
+        result = _execute_rpc()
         state["similar_history"] = result.data or []
     except Exception as e:
         logger.error(f"Retrieve history failed: {e}")

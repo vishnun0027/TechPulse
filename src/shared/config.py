@@ -49,7 +49,7 @@ class Settings(BaseSettings):
 
     # Performance
     max_concurrency: int = Field(
-        5, description="Maximum concurrent LLM calls in the pipeline"
+        3, description="Maximum concurrent LLM calls in the pipeline"
     )
 
 
