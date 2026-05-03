@@ -310,7 +310,7 @@ def update_source_delivery(source_urls: List[str], user_id: str) -> None:
                 # quality_score = ratio of clicked vs delivered (0.0-1.0)
                 # Stays 0.5 (neutral) until at least one click is recorded
                 new_quality = (
-                    round(clicked / new_delivered, 4) if new_delivered > 0 else 0.5
+                    round(min(clicked / new_delivered, 1.0), 4) if new_delivered > 0 else 0.5
                 )
 
                 supabase.table("source_health").update(

@@ -108,7 +108,8 @@ def process_feedback_batch(days: int = 7):
 
             health = res_health.data[0]
             new_clicked = health["articles_clicked"] + counts["positive"]
-            new_delivered = health["articles_delivered"] + counts["negative"]
+            # delivered is managed by update_source_delivery in db.py
+            new_delivered = health["articles_delivered"] 
             denom = max(new_delivered, 1)
             new_quality = round(min(new_clicked / denom, 1.0), 4)
 
