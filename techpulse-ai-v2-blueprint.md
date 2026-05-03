@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS article_events (
   title       text NOT NULL,             -- LLM-generated event title
   theme       text,                      -- e.g. "Generative AI", "Regulation"
   first_seen  timestamptz NOT NULL DEFAULT now(),
-  last_updated timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
   article_count int DEFAULT 1,
   centroid_embedding vector(768),        -- mean of all member article embeddings
   CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES auth.users(id)
@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS source_health (
   articles_clicked  int  DEFAULT 0,
   duplicate_rate    float DEFAULT 0.0,   -- fraction of near-duplicates produced
   quality_score     float DEFAULT 0.5,   -- derived: clicked / delivered
-  last_updated      timestamptz DEFAULT now(),
+  updated_at      timestamptz DEFAULT now(),
   PRIMARY KEY (source_id, user_id)
 );
 ```
@@ -387,7 +387,7 @@ def find_or_create_event(
         # Update centroid and count
         supabase.table("article_events").update({
             "article_count": result.data[0]["article_count"] + 1,
-            "last_updated": "now()"
+            "updated_at": "now()"
         }).eq("id", event_id).execute()
         return event_id
 
@@ -797,9 +797,9 @@ async function semanticSearch(queryText) {
 // Fetch event clusters from last 30 days
 const { data: events } = await supabase
   .from('article_events')
-  .select('title, article_count, theme, first_seen, last_updated')
+  .select('title, article_count, theme, first_seen, updated_at')
   .eq('user_id', session.user.id)
-  .gte('last_updated', thirtyDaysAgo)
+  .gte('updated_at', thirtyDaysAgo)
   .order('article_count', { ascending: false })
   .limit(20);
 ```

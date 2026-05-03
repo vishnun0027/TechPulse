@@ -29,6 +29,6 @@ BEGIN
                 END
             )
         ),
-        last_updated = now();
+        updated_at = now();
 END;
 $$;
