@@ -4,10 +4,12 @@ from upstash_redis import Redis
 from shared.config import settings
 from shared.utils import normalize_url
 
-# Initialize Redis client
-redis: Redis = Redis(
-    url=settings.upstash_redis_rest_url, token=settings.upstash_redis_rest_token
-)
+# Initialize Redis client lazily or handle empty config
+redis: Redis = None
+if settings.upstash_redis_rest_url and settings.upstash_redis_rest_token:
+    redis = Redis(
+        url=settings.upstash_redis_rest_url, token=settings.upstash_redis_rest_token
+    )
 
 STREAM_RAW = "stream:raw"
 DEDUP_TTL = settings.dedup_ttl_days * 86400

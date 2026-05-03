@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     supabase_key: str = Field(..., description="Supabase service role or anon key")
 
     # Upstash Redis Settings (Pipeline Queue & Cache)
-    upstash_redis_rest_url: str = Field(..., description="Upstash Redis REST URL")
-    upstash_redis_rest_token: str = Field(..., description="Upstash Redis REST token")
+    upstash_redis_rest_url: str = Field("", description="Upstash Redis REST URL")
+    upstash_redis_rest_token: str = Field("", description="Upstash Redis REST token")
 
     # Pipeline Tuning
     top_n_articles: int = Field(
