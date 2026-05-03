@@ -1,0 +1,93 @@
+name: TechPulse AI Intelligence Pulse
+
+on:
+  schedule:
+    # Run intelligence pulse every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      job_to_run:
+        description: 'Select the job to execute'
+        required: true
+        default: 'pulse'
+        type: choice
+        options:
+          - 'pulse'
+          - 'feedback'
+          - 'all'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: techpulse-pulse
+  cancel-in-progress: false
+
+jobs:
+  run-pulse:
+    if: |
+      (github.event_name == 'schedule') ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.job_to_run == 'pulse' || github.event.inputs.job_to_run == 'all'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        run: uv sync --frozen
+
+      - name: Execute Full Intelligence Sequence
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          COLLECTION_INTERVAL_DAYS: 14
+          PYTHONPATH: src
+        run: uv run techpulse-ops run all
+
+  run-feedback-loop:
+    if: |
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.job_to_run == 'feedback' || github.event.inputs.job_to_run == 'all'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        run: uv sync --frozen
+
+      - name: Process User Feedback Loop
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          PYTHONPATH: src
+        run: uv run techpulse-ops run feedback-loop --days 1
