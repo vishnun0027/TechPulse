@@ -96,50 +96,31 @@ uv run techpulse-ops run all
 
 ---
 
-## ⚡ Command Line Power Tools
+## 📖 Documentation
 
-TechPulse comes with two dedicated CLI tools. For a detailed guide on how to configure your account, topics, and feeds across different user tiers, see the **[User Guide](USER_GUIDE.md)**.
+For detailed guides on setup, operation, and architecture, please visit our **[Documentation Center](docs/README.md)**.
 
-### 🛠️ Operator CLI (`techpulse-ops`)
-For system-level management, orchestration, and automation.
-```bash
-# Run the pipeline
-uv run techpulse-ops run all
-uv run techpulse-ops run collect
+### 👤 User Documentation
+*   **[User Guide](docs/user_guide.md)**: Managing your feeds and topic filters via the `techpulse` CLI.
+*   **[Config Reference](docs/user_config.md)**: Deep dive into tenant settings and source health.
 
-# Monitor system health (live)
-uv run techpulse-ops monitor
-
-# View tenant statistics and pipeline health
-uv run techpulse-ops tenants list
-uv run techpulse-ops tenants stats
-```
-
-### ⚡ User CLI (`techpulse`)
-For personal management of your own feeds and filters (enforces RLS and requires `SUPABASE_ANON_KEY`).
-```bash
-# Login to your account
-uv run techpulse login
-
-# Manage your sources
-uv run techpulse sources list
-uv run techpulse sources import my_feeds.txt
-```
+### 🛠️ Developer & Operator Documentation
+*   **[Architecture Deep Dive](docs/dataflow.md)**: Understanding the 7-stage agentic pipeline and scoring logic.
+*   **[Developer Guide](docs/developer_guide.md)**: Security models, RLS, and development standards.
+*   **[Coding Standards](docs/coding_standards.md)**: PEP8, Ruff, and professional output rules.
 
 ---
 
 ## 🧹 Maintenance & Testing
 
-### Master Storage Reset
-To wipe all Redis streams, embeddings, and database history cleanly prior to a production launch:
-```bash
-uv run techpulse-ops reset --confirm
-```
-
-### Automated Testing
 To verify the entire RAG memory, grouping logic, and pipeline using `pytest`:
 ```bash
 PYTHONPATH=src uv run pytest
+```
+
+To wipe the pipeline state cleanly for a fresh run:
+```bash
+uv run techpulse-ops reset --confirm
 ```
 
 ---
