@@ -6,9 +6,17 @@ on:
     - cron: '0 */3 * * *'
   workflow_dispatch: # Allows manual trigger for testing collector separately
 
+permissions:
+  contents: read
+
+concurrency:
+  group: techpulse-collector
+  cancel-in-progress: false
+
 jobs:
   fast-collect:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -17,6 +25,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: "latest"
+          enable-cache: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
