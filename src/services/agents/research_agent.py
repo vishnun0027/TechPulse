@@ -111,13 +111,15 @@ ARTICLE:
         state["why_it_matters"] = result.get("why_it_matters", "")
         state["topics"] = result.get("topics", [])
     except Exception as e:
-        logger.error(f"Build summary failed: {e}")
-        # Robust fallback
+        logger.error(f"Build summary failed for '{state['article_title']}': {e}")
+        # Robust fallback with detailed error tracking for the USER
+        error_type = type(e).__name__
         state["summary"] = (
-            f"Summary generation failed. Original start: {state['article_text'][:200]}..."
+            f"⚠️ Summary generation failed ({error_type}).\n\n"
+            f"Original Content Preview: {state['article_text'][:300]}..."
         )
-        state["why_it_matters"] = "Error in analysis."
-        state["topics"] = []
+        state["why_it_matters"] = f"Error in AI analysis: {str(e)[:100]}"
+        state["topics"] = ["Error"]
     return state
 
 

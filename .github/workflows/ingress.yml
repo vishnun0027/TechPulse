@@ -26,6 +26,7 @@ jobs:
         with:
           version: "latest"
           enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,3 +44,10 @@ jobs:
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
           PYTHONPATH: src
         run: uv run techpulse-ops run collect
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -X POST ${{ secrets.DISCORD_WEBHOOK }} \
+          -H 'Content-Type: application/json' \
+          -d '{"content": "⚠️ TechPulse ingress.yml failed!"}'

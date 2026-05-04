@@ -103,10 +103,18 @@ async def process_article_v2(
     async with semaphore:
         try:
             loop = asyncio.get_running_loop()
+            content = article.get("content", "")
+
+            # ── Stage 1.5: Content Quality Filter ────────────────────────────
+            # Skip if content is too short (likely a repository link or placeholder)
+            if len(content) < 200:
+                rprint(f"[yellow]SKIP: Content too short ({len(content)} chars): {title[:50]}...[/yellow]")
+                acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
+                return False
 
             # ── Stage 2: Enrich (Semantic) ────────────────────────────────────
             embedding = await loop.run_in_executor(
-                None, embedder.embed_text, article.get("content", title), GROQ_API_KEY
+                None, embedder.embed_text, content or title, GROQ_API_KEY
             )
 
             if deduplicator.is_near_duplicate(db, embedding, user_id):

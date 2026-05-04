@@ -14,48 +14,124 @@ from rich.console import Console
 from rich.table import Table
 from rich.prompt import Prompt
 from rich import print as rprint
+from loguru import logger
+from importlib.metadata import version as get_version
+from cli.theme import PULSE_THEME
+
+def version_callback(value: bool):
+    if value:
+        rprint(f"Pulse CLI [bold cyan]v{get_version('techpulse-ai')}[/bold cyan]")
+        raise typer.Exit()
 
 app = typer.Typer(
-    name="techpulse",
-    help=" TechPulse AI - User CLI (your personal pipeline)",
+    name="pulse",
+    help=" [bold cyan]Pulse AI[/bold cyan] - Your personal tech intelligence pipeline",
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
 
-sources_app = typer.Typer(help="Manage your RSS sources", no_args_is_help=True)
-app.add_typer(sources_app, name="sources")
+# Sub-apps with new naming
+feeds_app = typer.Typer(help="Manage your RSS feeds", no_args_is_help=True)
+app.add_typer(feeds_app, name="feeds")
 
-topics_app = typer.Typer(help="Manage your topic filters", no_args_is_help=True)
-app.add_typer(topics_app, name="topics")
+filter_app = typer.Typer(help="Manage your topic filters", no_args_is_help=True)
+app.add_typer(filter_app, name="filter")
 
-console = Console()
+# Deprecation shim and global flags
+@app.callback()
+def main(
+    ctx: typer.Context,
+    version: bool = typer.Option(None, "--version", callback=version_callback, is_eager=True, help="Show version"),
+    debug: bool = typer.Option(False, "--debug", help="Enable verbose logging to ~/.pulse/debug.log"),
+):
+    if debug:
+        log_file = Path.home() / ".pulse" / "debug.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        logger.add(log_file, rotation="1 MB", level="DEBUG")
+        logger.debug("Pulse CLI started in debug mode")
 
+    if ctx.invoked_subcommand == "sources":
+        rprint("[yellow]Warning: 'sources' is deprecated. Use 'feeds' instead.[/yellow]")
+    if ctx.invoked_subcommand == "topics":
+        rprint("[yellow]Warning: 'topics' is deprecated. Use 'filter' instead.[/yellow]")
+
+console = Console(theme=PULSE_THEME)
+
+import keyring
+
+SERVICE_NAME = "techpulse-ai"
 CONFIG_PATH = Path.home() / ".techpulse" / "config.json"
 
 
-# ── Auth Helpers ──────────────────────────────────────────────────────────────
-
-
 def _load_session() -> Dict[str, Any]:
-    """Loads the current user session from the local config file."""
+    """Loads the user session from either System Keyring or local config fallback."""
     if not CONFIG_PATH.exists():
-        rprint("[red]Not logged in. Run: techpulse login[/red]")
+        rprint("[red]Not logged in. Run: pulse login[/red]")
         raise typer.Exit(1)
+        
     with open(CONFIG_PATH) as f:
-        return json.load(f)
+        session = json.load(f)
+        
+    # Attempt to pull sensitive tokens from OS Vault
+    try:
+        session["access_token"] = keyring.get_password(SERVICE_NAME, f"{session['user_id']}_access")
+        session["refresh_token"] = keyring.get_password(SERVICE_NAME, f"{session['user_id']}_refresh")
+    except Exception:
+        # Keyring failed or unavailable (Headless Linux)
+        pass
+
+    if not session.get("access_token"):
+        rprint("[red]Session credentials missing. Please login again.[/red]")
+        raise typer.Exit(1)
+        
+    return session
 
 
 def _save_session(data: Dict[str, Any]) -> None:
-    """Saves the user session details to the local config file."""
+    """Saves tokens to Keyring with a transparent fallback to local JSON."""
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    uid = data["user_id"]
+    
+    # 1. Try to store sensitive tokens in OS Vault
+    keyring_success = False
+    try:
+        keyring.set_password(SERVICE_NAME, f"{uid}_access", data["access_token"])
+        keyring.set_password(SERVICE_NAME, f"{uid}_refresh", data["refresh_token"])
+        keyring_success = True
+    except Exception:
+        # Headless mode: keys will be stored in the JSON instead
+        pass
+    
+    # 2. Store meta in JSON (include tokens ONLY if keyring failed)
+    meta = {
+        "user_id": uid,
+        "email": data["email"],
+        "anon_key": data["anon_key"],
+    }
+    if not keyring_success:
+        meta["access_token"] = data["access_token"]
+        meta["refresh_token"] = data["refresh_token"]
+        meta["vault_type"] = "file"
+    else:
+        meta["vault_type"] = "system"
+
     with open(CONFIG_PATH, "w") as f:
-        json.dump(data, f, indent=2)
-    os.chmod(CONFIG_PATH, 0o600)  # Owner read/write only
+        json.dump(meta, f, indent=2)
+    os.chmod(CONFIG_PATH, 0o600)
 
 
 def _clear_session() -> None:
-    """Deletes the local session config file."""
+    """Deletes local config and clears tokens from Keyring if present."""
     if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH) as f:
+                session = json.load(f)
+                uid = session.get("user_id")
+                if uid:
+                    keyring.delete_password(SERVICE_NAME, f"{uid}_access")
+                    keyring.delete_password(SERVICE_NAME, f"{uid}_refresh")
+        except Exception:
+            pass 
         CONFIG_PATH.unlink()
 
 
@@ -74,49 +150,116 @@ def _get_user_client() -> Tuple[Any, Dict[str, Any]]:
 
     # Use project URL and the stored anon key + JWT
     client = create_client(settings.supabase_url, session["anon_key"])
-    client.auth.set_session(session["access_token"], session["refresh_token"])
+    try:
+        # Attempt to set session. Supabase client will auto-refresh if possible.
+        res = client.auth.set_session(session["access_token"], session["refresh_token"])
+        
+        # If the session was refreshed, update our local vault
+        if res.session and res.session.access_token != session["access_token"]:
+             _save_session({
+                "access_token": res.session.access_token,
+                "refresh_token": res.session.refresh_token,
+                "user_id": session["user_id"],
+                "email": session["email"],
+                "anon_key": session["anon_key"],
+            })
+    except Exception:
+        rprint("[bold red]Vault Access Error.[/bold red] Your session is no longer valid.")
+        rprint("[dim]Please run: [white]pulse login[/white] to re-authenticate.[/dim]")
+        _clear_session()
+        raise typer.Exit(1)
+        
     return client, session
 
 
-# ── Auth Commands ─────────────────────────────────────────────────────────────
+# ── Onboarding & Auth Commands ────────────────────────────────────────────────
+
+
+@app.command("init")
+def init(
+    non_interactive: bool = typer.Option(False, "--non-interactive", help="Skip welcome screens")
+) -> None:
+    """
+    Initialize your Pulse AI environment and link your account.
+    """
+    console.rule("[bold cyan]Welcome to Pulse AI[/bold cyan]")
+    
+    if not non_interactive:
+        rprint("\n[dim]Pulse is your personal tech intelligence pipeline.\n"
+               "This command will set up your local environment and link your account.[/dim]\n")
+
+    # 1. Check if already logged in
+    if CONFIG_PATH.exists():
+        try:
+            session = _load_session()
+            rprint(f"[green]Pulse is already initialized for [bold]{session['email']}[/bold][/green]")
+            if not typer.confirm("Do you want to re-initialize?"):
+                return
+        except Exception:
+            rprint("[yellow]Existing configuration is corrupt. Re-initializing...[/yellow]")
+
+    # 2. Run Login
+    login()
+    
+    # 3. Bootstrap default config if missing
+    client, session = _get_user_client()
+    with console.status("Bootstrapping personal intelligence..."):
+        existing = client.table("app_config").select("key").eq("key", "topics").execute()
+        if not existing.data:
+            default_topics = {"allowed": ["ai", "python", "rust"], "blocked": ["crypto"], "priority": []}
+            client.table("app_config").insert({
+                "key": "topics", 
+                "value": default_topics, 
+                "user_id": session["user_id"]
+            }).execute()
+            rprint("[dim]Initialized default topic filters (AI, Python, Rust).[/dim]")
+
+    rprint("\n[bold green]✓ Initialization Complete![/bold green]")
+    rprint("\n[bold]Next Steps:[/bold]")
+    rprint("  1. Add your first feed: [cyan]pulse feeds add 'Hacker News' https://news.ycombinator.com/rss[/cyan]")
+    rprint("  2. View your status:    [cyan]pulse status[/cyan]")
+    rprint("  3. Read your digest:    [cyan]pulse digest[/cyan]\n")
 
 
 @app.command("login")
 def login() -> None:
-    """Log in with your TechPulse account (email + password)."""
+    """Log in with your Pulse account (email + password)."""
     from supabase import create_client
     from shared.config import settings
 
-    # Determing the anon key for the Supabase instance
-    anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
-    if not anon_key:
-        anon_key = Prompt.ask(
-            "Supabase Anon Key (from project settings)", password=True
-        )
+    # 1. Determine Backend URL and Anon Key (Priority: Env -> Settings)
+    url = "https://dhnujdduifibmalkyzhi.supabase.co"
+    anon_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobnVqZGR1aWZpYm1hbGt5emhpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1MjQxMzMsImV4cCI6MjA5MjEwMDEzM30.vMAWYDZW76V2EgwlJugkF4d053CXWo4efI-yTpwhHVw"
 
+    if not url:
+        url = Prompt.ask("Supabase Project URL")
+    if not anon_key:
+        anon_key = Prompt.ask("Supabase Anon Key", password=True)
+
+    console.print(f"[dim]Connecting to: {url}[/dim]")
+    
     email = Prompt.ask("Email")
     password = Prompt.ask("Password", password=True)
 
     with console.status("Authenticating..."):
         try:
-            client = create_client(settings.supabase_url, anon_key)
-            res = client.auth.sign_in_with_password(
-                {"email": email, "password": password}
-            )
-        except Exception as e:
-            rprint(f"[red]Login failed: {e}[/red]")
-            raise typer.Exit(1)
+            client = create_client(url, anon_key)
+            res = client.auth.sign_in_with_password({"email": email, "password": password})
+            
+            if not res.session:
+                rprint("[red]Login failed: No session returned.[/red]")
+                return
 
-    _save_session(
-        {
-            "access_token": res.session.access_token,
-            "refresh_token": res.session.refresh_token,
-            "user_id": res.user.id,
-            "email": res.user.email,
-            "anon_key": anon_key,
-        }
-    )
-    rprint(f"[green]Logged in as [bold]{res.user.email}[/bold][/green]")
+            _save_session({
+                "access_token": res.session.access_token,
+                "refresh_token": res.session.refresh_token,
+                "user_id": res.user.id,
+                "email": email,
+                "anon_key": anon_key,
+            })
+            rprint(f"[bold green]Success![/bold green] Logged in as [bold]{email}[/bold]")
+        except Exception as e:
+            rprint(f"[red]Login failed:[/red] {str(e)}")
 
 
 @app.command("logout")
@@ -181,10 +324,8 @@ def status() -> None:
     console.print(table)
 
 
-# ── Sources Sub-Commands ──────────────────────────────────────────────────────
-
-
-@sources_app.command("list")
+# ── Feeds Sub-Commands (Legacy: sources) ──────────────────────────────────────
+@feeds_app.command("list")
 def sources_list() -> None:
     """List all your active RSS sources."""
     client, _ = _get_user_client()
@@ -211,7 +352,7 @@ def sources_list() -> None:
     console.print(table)
 
 
-@sources_app.command("add")
+@feeds_app.command("add")
 def sources_add(
     name: str = typer.Argument(..., help="Display name for this feed"),
     url: str = typer.Argument(..., help="Full URL of the RSS feed"),
@@ -230,7 +371,56 @@ def sources_add(
         rprint("[red]Failed to add source.[/red]")
 
 
-@sources_app.command("remove")
+@feeds_app.command("health")
+def feeds_health() -> None:
+    """View the reliability and quality scores for all your RSS feeds."""
+    client, _ = _get_user_client()
+    
+    # 1. Fetch names and URLs from rss_sources
+    sources_res = client.table("rss_sources").select("id, name, url").execute()
+    sources = {s["id"]: s for s in (sources_res.data or [])}
+    
+    if not sources:
+        rprint("[yellow]No feeds found to analyze.[/yellow]")
+        return
+
+    # 2. Fetch telemetry from source_health
+    health_res = client.table("source_health").select("source_id, quality_score, articles_delivered").execute()
+    health_map = {h["source_id"]: h for h in (health_res.data or [])}
+
+    table = Table(title=" RSS Source Health & Quality", show_lines=False, box=None)
+    table.add_column("Source", style="bold cyan")
+    table.add_column("Reliability", justify="right")
+    table.add_column("Impact", justify="right")
+    table.add_column("Status")
+
+    for sid, source in sources.items():
+        health = health_map.get(sid, {})
+        score = health.get("quality_score", 0.5) or 0.5
+        delivered = health.get("articles_delivered", 0) or 0
+        
+        # Color coding based on reliability
+        if score >= 0.8:
+            status = "[bold green]Trusted[/bold green]"
+            score_color = "green"
+        elif score >= 0.5:
+            status = "[yellow]Stable[/yellow]"
+            score_color = "yellow"
+        else:
+            status = "[red]Noisy[/red]"
+            score_color = "red"
+
+        table.add_row(
+            source["name"],
+            f"[{score_color}]{score:.2f}[/{score_color}]",
+            str(delivered),
+            status
+        )
+
+    console.print(table)
+
+
+@feeds_app.command("remove")
 def sources_remove(
     url: str = typer.Argument(..., help="URL of the source to remove"),
 ) -> None:
@@ -240,7 +430,7 @@ def sources_remove(
     rprint(f"[yellow]Removed:[/yellow] {url}")
 
 
-@sources_app.command("import")
+@feeds_app.command("import")
 def sources_import(
     file: Path = typer.Argument(
         ..., help="Path to a text file (Format: Name | URL per line)"
@@ -312,10 +502,50 @@ def sources_import(
     rprint("  ".join(parts))
 
 
-# ── Topics Sub-Commands ───────────────────────────────────────────────────────
+# ── Intelligence Commands ──────────────────────────────────────────────────────
 
 
-@topics_app.command("show")
+@app.command("digest")
+def pulse_digest(
+    limit: int = typer.Option(10, "--limit", "-l", help="Number of articles to show"),
+    min_score: float = typer.Option(3.0, "--min-score", "-s", help="Minimum score threshold"),
+) -> None:
+    """
+    Fetch and read your latest AI-generated tech intelligence briefing.
+    """
+    from rich.markdown import Markdown
+    client, session = _get_user_client()
+
+    with console.status("Fetching latest intelligence..."):
+        # Get high-scoring articles that are either delivered or pending
+        res = (
+            client.table("articles")
+            .select("title, summary, why_it_matters, score, source, published_at")
+            .gte("score", min_score)
+            .order("published_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        articles = res.data or []
+
+    if not articles:
+        rprint(f"[yellow]No high-scoring articles found (threshold: {min_score}).[/yellow]")
+        return
+
+    console.rule(f"[bold cyan]Intelligence Digest: {session['email']}")
+    
+    for i, art in enumerate(articles, 1):
+        rprint(f"\n[bold cyan][{i}] {art['title']}[/bold cyan] [dim](Score: {art['score']:.1f} | {art['source']})[/dim]")
+        
+        md_content = f"**Summary**: {art['summary']}\n\n**Why it Matters**: {art['why_it_matters']}"
+        console.print(Markdown(md_content))
+        console.print("[dim]────────────────────────────────────────────────────────────────[/dim]")
+
+    rprint(f"\n[bold green]✓ Showing {len(articles)} items above {min_score} threshold.[/bold green]")
+
+
+# ── Filter Sub-Commands (Legacy: topics) ──────────────────────────────────────
+@filter_app.command("show")
 def topics_show() -> None:
     """Display your current personal topic filter and priority settings."""
     client, _ = _get_user_client()
@@ -338,7 +568,7 @@ def topics_show() -> None:
     console.print(table)
 
 
-@topics_app.command("set")
+@filter_app.command("set")
 def topics_set(
     allowed: str = typer.Option(
         "", "--allowed", help="Comma-separated topics you want to track"
@@ -379,9 +609,16 @@ def topics_set(
             {"key": "topics", "value": value, "user_id": uid}
         ).execute()
 
-    rprint("[green]Topic filters updated.[/green]")
-    topics_show()
+# ── Legacy Aliases ────────────────────────────────────────────────────────────
+@app.command("sources", hidden=True)
+def sources_alias():
+    rprint("[yellow]Warning: 'sources' is deprecated. Use 'feeds' instead.[/yellow]")
+    sources_list()
 
+@app.command("topics", hidden=True)
+def topics_alias():
+    rprint("[yellow]Warning: 'topics' is deprecated. Use 'filter' instead.[/yellow]")
+    topics_show()
 
 if __name__ == "__main__":
     app()

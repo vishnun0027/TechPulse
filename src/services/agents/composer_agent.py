@@ -22,6 +22,13 @@ SECTION_THEMES = {
         "release",
         "open source",
         "github",
+        "yaml",
+        "spec",
+        "decoder",
+        "compiler",
+        "tool",
+        "cli",
+        "dev",
     ],
     "Industry": ["funding", "acquisition", "startup", "ipo", "layoffs", "valuation"],
     "Security": ["vulnerability", "breach", "cve", "exploit", "patch", "malware"],
@@ -34,7 +41,18 @@ SECTION_THEMES = {
         "government",
         "compliance",
     ],
-    "Research": ["paper", "arxiv", "benchmark", "study", "dataset", "model"],
+    "Research": [
+        "paper",
+        "arxiv",
+        "benchmark",
+        "study",
+        "dataset",
+        "model",
+        "research",
+        "science",
+        "physics",
+        "breakthrough",
+    ],
     "Quiet Signals": [],  # catch-all for low-score but novel items
 }
 
@@ -72,6 +90,7 @@ def compose_digest(
             .eq("is_delivered", False)
             .gte("score", DELIVERY_THRESHOLD)
             .order("score", desc=True)
+            .limit(200)
             .execute()
         )
 

@@ -14,10 +14,10 @@ class RankSignals:
 
 # Default weights - can be stored per user in app_config in a future iteration
 DEFAULT_WEIGHTS = {
-    "base_relevance": 0.35,
-    "novelty_score": 0.25,
-    "source_quality": 0.20,
-    "topic_match": 0.15,
+    "base_relevance": 0.50,
+    "topic_match": 0.20,
+    "novelty_score": 0.15,
+    "source_quality": 0.10,
     "priority_boost": 0.05,
 }
 

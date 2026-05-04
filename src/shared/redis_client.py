@@ -153,14 +153,18 @@ def read_from_group(
             ]
         )
 
-    if not result:
+    if not result or not result[0] or not result[0][1]:
         return []
 
     raw_messages = result[0][1]
     messages = []
     for entry in raw_messages:
+        if not entry or len(entry) < 2:
+            continue
         msg_id = entry[0]
         fields_list = entry[1]
+        if not fields_list:
+            continue
         fields = {
             fields_list[i]: fields_list[i + 1] for i in range(0, len(fields_list), 2)
         }

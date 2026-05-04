@@ -39,6 +39,7 @@ jobs:
         with:
           version: "latest"
           enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -60,6 +61,13 @@ jobs:
           PYTHONPATH: src
         run: uv run techpulse-ops run all
 
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -X POST ${{ secrets.DISCORD_WEBHOOK }} \
+          -H 'Content-Type: application/json' \
+          -d '{"content": "⚠️ TechPulse pulse.yml failed!"}'
+
   run-feedback-loop:
     if: |
       (github.event_name == 'workflow_dispatch' && (github.event.inputs.job_to_run == 'feedback' || github.event.inputs.job_to_run == 'all'))
@@ -74,6 +82,7 @@ jobs:
         with:
           version: "latest"
           enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -91,3 +100,10 @@ jobs:
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
           PYTHONPATH: src
         run: uv run techpulse-ops run feedback-loop --days 1
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -X POST ${{ secrets.DISCORD_WEBHOOK }} \
+          -H 'Content-Type: application/json' \
+          -d '{"content": "⚠️ TechPulse feedback-loop failed!"}'

@@ -1,5 +1,8 @@
 # TechPulse AI 🤖
 
+[![Pulse](https://github.com/vishnun0027/techpulse-ai/actions/workflows/pulse.yml/badge.svg)](https://github.com/vishnun0027/techpulse-ai/actions/workflows/pulse.yml)
+[![Ingress](https://github.com/vishnun0027/techpulse-ai/actions/workflows/ingress.yml/badge.svg)](https://github.com/vishnun0027/techpulse-ai/actions/workflows/ingress.yml)
+
 ### *Your personal tech intelligence system, curated by Agentic AI.*
 
 TechPulse AI goes beyond being an automated news pipeline. It is a **personal tech intelligence system** that remembers context, suppresses repetition, and explains why a development matters to *you* specifically before it ever sends an alert. 
