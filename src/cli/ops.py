@@ -172,7 +172,7 @@ async def process_article_v2(
                 None,
                 agent.invoke,
                 {
-                    "article_text": article.get("content", ""),
+                    "article_text": content,
                     "article_title": title,
                     "user_id": user_id,
                     "embedding": embedding,
@@ -189,7 +189,7 @@ async def process_article_v2(
                     "title": title,
                     "source_url": article.get("source_url"),
                     "source": article.get("source"),
-                    "content": article.get("content"),
+                    "content": content,
                     "embedding": embedding,
                     "novelty_score": novelty_score,
                     "event_id": event_id,
