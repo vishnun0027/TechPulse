@@ -103,7 +103,8 @@ async def process_article_v2(
     async with semaphore:
         try:
             loop = asyncio.get_running_loop()
-            content = article.get("content", "")
+            from shared.utils import clean_html
+            content = clean_html(article.get("content", ""))
 
             # ── Stage 1.5: Content Quality Filter ────────────────────────────
             # Skip if content is too short (likely a repository link or placeholder)

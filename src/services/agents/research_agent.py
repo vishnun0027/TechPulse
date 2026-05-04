@@ -71,7 +71,9 @@ def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
         [
             (
                 "system",
-                "You are a precise tech analyst. Summarize articles with historical context. {format_instructions}",
+                "You are a precise tech analyst. Summarize technical articles with historical context. "
+                "The input may contain technical noise or fragments; focus on the core engineering value and facts. "
+                "{format_instructions}",
             ),
             (
                 "human",

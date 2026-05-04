@@ -58,3 +58,35 @@ def normalize_url(url: str) -> str:
     )
 
     return normalized
+def clean_html(html_content: str) -> str:
+    """
+    Removes HTML tags and boilerplate from content to provide clean text for LLMs.
+    """
+    if not html_content:
+        return ""
+    try:
+        from bs4 import BeautifulSoup
+
+        # Use lxml if available, otherwise fallback to html.parser
+        soup = BeautifulSoup(html_content, "html.parser")
+
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.extract()
+
+        # Get text
+        text = soup.get_text(separator=" ")
+
+        # Break into lines and remove leading/trailing whitespace
+        lines = (line.strip() for line in text.splitlines())
+        # Break multi-headlines into a line each
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        # Drop blank lines
+        text = " ".join(chunk for chunk in chunks if chunk)
+
+        return text
+    except Exception:
+        # Fallback to simple regex if BS4 fails
+        import re
+
+        return re.sub(r"<[^>]+>", "", html_content)
