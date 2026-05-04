@@ -11,6 +11,7 @@ from tenacity import (
 )
 from groq import RateLimitError
 import httpx
+from langchain_core.exceptions import OutputParserException
 
 T = TypeVar("T")
 
@@ -18,6 +19,7 @@ T = TypeVar("T")
 # Deliberately NOT including bare `Exception` - that masks real bugs.
 _TRANSIENT_ERRORS = (
     RateLimitError,
+    OutputParserException,
     asyncio.TimeoutError,
     httpx.ConnectError,
     httpx.ReadTimeout,
@@ -53,6 +55,29 @@ def retry_llm_call(
         return cast(Callable[..., T], wrapper)
 
     return decorator
+
+
+def strip_thinking(text: str) -> str:
+    """Removes <think> reasoning blocks from LLM responses."""
+    import re
+    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
+
+def clean_llm_json(text: str) -> str:
+    """
+    Cleans LLM response text for JSON parsing:
+    1. Strips <think> reasoning blocks.
+    2. Extracts the first block enclosed in { }.
+    """
+    text = strip_thinking(text)
+    
+    # 2. Extract JSON payload
+    start = text.find('{')
+    end = text.rfind('}')
+    if start != -1 and end != -1:
+        text = text[start:end+1]
+    
+    return text.strip()
 
 
 def async_retry_llm_call(

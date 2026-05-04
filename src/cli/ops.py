@@ -271,7 +271,7 @@ def run_hf_export(
     rprint("[green]Export finished.[/green]")
 
 
-async def _run_all_async() -> None:
+async def _run_all_async(limit: int = 50) -> None:
     """Internal async orchestrator for the full V2 pipeline."""
     console.rule("[bold cyan]TechPulse AI V2 Pipeline Orchestration")
 
@@ -287,7 +287,7 @@ async def _run_all_async() -> None:
     # ── Stage 2-5: Enrich, Rank, Research ────────────────────────────────────
     console.rule("[dim]Stage 2-5: Personal Intelligence Enhancement", align="left")
     messages = read_from_group(
-        summarizer_main.GROUP_NAME, summarizer_main.CONSUMER_NAME, count=50
+        summarizer_main.GROUP_NAME, summarizer_main.CONSUMER_NAME, count=limit
     )
 
     if not messages:
@@ -331,9 +331,11 @@ async def _run_all_async() -> None:
 
 
 @run_app.command("all")
-def run_all() -> None:
+def run_all(
+    limit: int = typer.Option(50, "--limit", "-l", help="Number of articles to process from queue"),
+) -> None:
     """Execute the complete end-to-end V2 pipeline in parallel."""
-    asyncio.run(_run_all_async())
+    asyncio.run(_run_all_async(limit=limit))
 
 
 # ── Monitor ──────────────────────────────────────────────────────────────────

@@ -66,8 +66,10 @@ Score criteria (0-10.0):
                 ("human", "Title: {title}\nSource: {source}\nContent: {content}"),
             ]
         )
+        from shared.ai_utils import clean_llm_json
+        from langchain_core.runnables import RunnableLambda
         parser = JsonOutputParser(pydantic_object=ArticleAnalysis)
-        _chain = prompt | get_llm() | parser
+        _chain = prompt | get_llm() | RunnableLambda(lambda x: clean_llm_json(x.content)) | parser
     return _chain
 
 

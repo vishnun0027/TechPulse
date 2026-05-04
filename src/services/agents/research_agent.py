@@ -55,44 +55,33 @@ def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
     )
     parser = JsonOutputParser(pydantic_object=ArticleAnalysis)
 
-    history_context = ""
-    # Ensure similar_history only contains valid dicts
-    valid_history = [r for r in state.get("similar_history", []) if isinstance(r, dict)]
-
-    if valid_history:
-        history_context = "\n".join(
-            [
-                f"- [{r.get('published_at', 'recent')[:10]}] {r.get('title', 'Untitled')}: {r.get('why_it_matters', (r.get('summary') or '')[:120])}"
-                for r in valid_history
-            ]
-        )
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                "You are a precise tech analyst. Summarize technical articles with historical context. "
-                "The input may contain technical noise or fragments; focus on the core engineering value and facts. "
-                "{format_instructions}",
-            ),
-            (
-                "human",
-                """HISTORICAL CONTEXT:
-{history_context}
-
-ARTICLE:
-{article_title}
-{article_text}""",
-            ),
-        ]
-    )
-
-    chain = prompt | llm | parser
-
-    from shared.ai_utils import retry_llm_call
+    # ── Internal Helper: Call LLM with Retries ────────────────────────────────
+    from shared.ai_utils import retry_llm_call, clean_llm_json
+    from langchain_core.runnables import RunnableLambda
 
     @retry_llm_call(max_attempts=3)
     def call_llm(history_context, article_title, article_text, format_instructions):
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are a precise tech analyst. Summarize technical articles with historical context. "
+                    "The input may contain technical noise or fragments; focus on the core engineering value and facts. "
+                    "{format_instructions}",
+                ),
+                (
+                    "human",
+                    "HISTORICAL CONTEXT:\n{history_context}\n\nARTICLE:\n{article_title}\n{article_text}",
+                ),
+            ]
+        )
+        # Use RunnableLambda to clean the reasoning blocks before parsing
+        chain = (
+            prompt 
+            | llm 
+            | RunnableLambda(lambda x: clean_llm_json(x.content)) 
+            | parser
+        )
         return chain.invoke(
             {
                 "history_context": history_context,
@@ -102,27 +91,43 @@ ARTICLE:
             }
         )
 
+    # ── Node Execution ────────────────────────────────────────────────────────
     try:
+        history_context = ""
+        # Ensure similar_history only contains valid dicts
+        valid_history = [r for r in state.get("similar_history", []) if isinstance(r, dict)]
+
+        if valid_history:
+            history_context = "\n".join(
+                [
+                    f"- [{(r.get('published_at') or 'recent')[:10]}] {r.get('title', 'Untitled')}: {r.get('why_it_matters', (r.get('summary') or '')[:120])}"
+                    for r in valid_history
+                ]
+            )
+
         result = call_llm(
             history_context=history_context or "No prior coverage found.",
             article_title=state["article_title"],
             article_text=state["article_text"][:4000],
             format_instructions=parser.get_format_instructions(),
         )
+        
         # Extract structured results
         state["summary"] = result.get("summary", "")
         state["why_it_matters"] = result.get("why_it_matters", "")
         state["topics"] = result.get("topics", [])
+        
     except Exception as e:
         logger.error(f"Build summary failed for '{state['article_title']}': {e}")
         # Robust fallback with detailed error tracking for the USER
         error_type = type(e).__name__
         state["summary"] = (
-            f"⚠️ Summary generation failed ({error_type}).\n\n"
+            f"Summary generation failed ({error_type}).\n\n"
             f"Original Content Preview: {state['article_text'][:300]}..."
         )
         state["why_it_matters"] = f"Error in AI analysis: {str(e)[:100]}"
         state["topics"] = ["Error"]
+        
     return state
 
 

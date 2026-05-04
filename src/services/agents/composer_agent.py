@@ -127,7 +127,8 @@ Be direct, no fluff. Start with the most important theme.
 Stories:\n{article_titles}"""
 
         intro_response = groq_client.invoke(prompt)
-        intro = intro_response.content.strip()
+        from shared.ai_utils import strip_thinking
+        intro = strip_thinking(intro_response.content)
 
         # Check for breaking news
         breaking = [a for a in articles if a.get("score", 0) >= BREAKING_THRESHOLD]
