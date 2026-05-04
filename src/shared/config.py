@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     groq_model: str = Field(
         "llama-3.1-8b-instant", description="Model ID to use for summarization"
     )
+    groq_research_model: str = Field(
+        "qwen/qwen3-32b", description="Model ID to use for deep-dive research"
+    )
 
     # Supabase Settings (Backend Data & Auth)
     supabase_url: str = Field(..., description="Supabase project URL")

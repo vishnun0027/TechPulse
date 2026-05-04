@@ -48,9 +48,10 @@ def retrieve_history(state: ResearchState, supabase: Client) -> ResearchState:
 
 def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
     """Node 2: RAG-enhanced summarization with historical context."""
-    # Use higher capacity model for research and lower temperature for JSON stability
+    # Use high-capacity model for research (default: Qwen 32B for rate-limit efficiency)
+    from shared.config import settings
     llm = ChatGroq(
-        model="llama-3.3-70b-versatile", api_key=groq_api_key, temperature=0.1
+        model=settings.groq_research_model, api_key=groq_api_key, temperature=0.1
     )
     parser = JsonOutputParser(pydantic_object=ArticleAnalysis)
 
