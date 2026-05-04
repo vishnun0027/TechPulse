@@ -10,6 +10,7 @@ class RankSignals:
     source_quality: float  # 0–1: from source_health table
     topic_match: float  # 0–1: ratio of user topics matching article topics
     priority_boost: float  # 1.0 if article matches a priority topic, else 0.0
+    is_blocked: bool = False  # If True, the article matches a negative keyword
 
 
 # Default weights - can be stored per user in app_config in a future iteration
@@ -31,11 +32,11 @@ def compute_final_score(signals: RankSignals, weights: dict = DEFAULT_WEIGHTS) -
     """
     Returns a final score 0.0–10.0.
     Articles scoring below settings.delivery_threshold are excluded from digests.
-
-    Formula:
-      base_relevance is already 0–10 from the LLM, normalized by weight.
-      All other signals are 0–1, scaled by weight × 10.
+    If an article is blocked, it returns 0.0.
     """
+    if signals.is_blocked:
+        return 0.0
+
     try:
         score = (
             signals.base_relevance * weights["base_relevance"]

@@ -135,7 +135,12 @@ async def process_article_v2(
             # Heuristic topic_match fallback
             article_topics = article.get("topics", [])
             allowed_topics = config.get("allowed", [])
+            blocked_topics = config.get("blocked", [])
             priority_topics = {t.lower() for t in config.get("priority", [])}
+
+            # Check for blocked topics
+            article_topics_lower = {t.lower() for t in article_topics}
+            is_blocked = any(t.lower() in article_topics_lower for t in blocked_topics)
 
             if not article_topics and allowed_topics:
                 text = (title + " " + article.get("content", "")).lower()
@@ -156,6 +161,7 @@ async def process_article_v2(
                 source_quality=quality,
                 topic_match=topic_match,
                 priority_boost=1.0 if has_priority else 0.0,
+                is_blocked=is_blocked,
             )
             final_score = scorer.compute_final_score(signals)
 
