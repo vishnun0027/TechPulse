@@ -93,23 +93,43 @@ async def process_article_v2(
 ) -> bool:
     """
     Executes the full V2 pipeline for a single article message.
-    Stages: 2 (Enrich) → 3 (Rank) → 4 (Research) → 5 (Save)
+    Stages: 1 (Triage) -> 2 (Enrich) → 3 (Rank) → 4 (Research) → 5 (Save)
     """
+    from shared.db import save_article, log_rejection
+    from shared.utils import clean_html
+
     article = msg["data"]
     msg_id = msg["id"]
     user_id = article.get("user_id")
     title = article.get("title", "Untitled")
+    source = article.get("source", "Unknown")
+    url = article.get("source_url", "")
 
     async with semaphore:
         try:
             loop = asyncio.get_running_loop()
-            from shared.utils import clean_html
+            
+            # ── Stage 1: Early Triage & Noise Filter ─────────────────────────
             content = clean_html(article.get("content", ""))
-
-            # ── Stage 1.5: Content Quality Filter ────────────────────────────
-            # Skip if content is too short (likely a repository link or placeholder)
+            
+            # Reject ultra-short content immediately
             if len(content) < 200:
-                rprint(f"[yellow]SKIP: Content too short ({len(content)} chars): {title[:50]}...[/yellow]")
+                rprint(f"[yellow]SKIP: Content too short ({len(content)} chars): {title[:40]}...[/yellow]")
+                acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
+                return False
+
+            config = get_filter_config(user_id)
+            allowed_topics = config.get("allowed", [])
+            blocked_topics = config.get("blocked", [])
+            priority_topics = {t.lower() for t in config.get("priority", [])}
+
+            # Fast Keyword Check: If no allowed topics are found in text, it's likely noise
+            text_lower = (title + " " + content).lower()
+            keyword_matches = [t for t in allowed_topics if t.lower() in text_lower]
+            
+            if allowed_topics and not keyword_matches:
+                rprint(f"[dim]SKIP: Noise (No keywords): {title[:40]}...[/dim]")
+                log_rejection(user_id, title, source, url, 0.0, "Noise (No keywords)")
                 acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
                 return False
 
@@ -119,7 +139,7 @@ async def process_article_v2(
             )
 
             if deduplicator.is_near_duplicate(db, embedding, user_id):
-                rprint(f"[dim]SKIP: Near-duplicate: {title[:50]}...[/dim]")
+                rprint(f"[dim]SKIP: Near-duplicate: {title[:40]}...[/dim]")
                 acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
                 return False
 
@@ -128,52 +148,52 @@ async def process_article_v2(
                 db, summarizer_main.get_llm(), embedding, title, user_id
             )
 
-            # ── Stage 3: Rank (with real signals) ────────────────────────────
-            config = get_filter_config(user_id)
+            # ── Stage 3: Tiered Ranking ──────────────────────────────────────
             quality = get_source_quality(article.get("source_id"), user_id)
-
-            # Heuristic topic_match fallback
-            article_topics = article.get("topics", [])
-            allowed_topics = config.get("allowed", [])
-            blocked_topics = config.get("blocked", [])
-            priority_topics = {t.lower() for t in config.get("priority", [])}
-
-            # Check for blocked topics
-            article_topics_lower = {t.lower() for t in article_topics}
-            is_blocked = any(t.lower() in article_topics_lower for t in blocked_topics)
-
-            if not article_topics and allowed_topics:
-                text = (title + " " + article.get("content", "")).lower()
-                matches = [t for t in allowed_topics if t.lower() in text]
-                topic_match = 0.8 if matches else 0.4
-                has_priority = any(t.lower() in priority_topics for t in matches)
-            else:
-                topic_match = _compute_topic_match(article_topics, allowed_topics)
-                has_priority = any(t.lower() in priority_topics for t in article_topics)
-
-            # Real base_relevance fallback
-            db_score = article.get("score")
-            base_relevance = float(db_score) if db_score is not None else 4.0
-
+            
+            # Pass 1: Heuristic Ranking
+            heuristic_match = 0.6 if keyword_matches else 0.4
+            has_priority = any(t.lower() in priority_topics for t in keyword_matches)
+            
             signals = scorer.RankSignals(
-                base_relevance=base_relevance,
+                base_relevance=4.0, # Neutral starting point
                 novelty_score=novelty_score,
                 source_quality=quality,
-                topic_match=topic_match,
+                topic_match=heuristic_match,
                 priority_boost=1.0 if has_priority else 0.0,
-                is_blocked=is_blocked,
+                is_blocked=False,
             )
-            final_score = scorer.compute_final_score(signals)
+            h_score = scorer.compute_final_score(signals)
 
-            # ── Stage 3.5: Early Rejection ───────────────────
-            if final_score < settings.delivery_threshold:
-                rprint(
-                    f"[dim]SKIP: Score too low ({final_score:.1f}) - dropping to save AI resources: {title[:40]}...[/dim]"
+            # Pass 2: Conditional AI Refinement (Borderline articles)
+            final_score = h_score
+            ai_topics = []
+            
+            # If borderline (3.0 - 6.0), use a fast LLM call to get real topics/score
+            if 3.0 <= h_score <= 6.5:
+                rprint(f"[cyan]Refining borderline article ({h_score}): {title[:40]}...[/cyan]")
+                analysis = await summarizer_main.call_groq_async(
+                    title, content, source, allowed_topics
                 )
+                ai_topics = analysis.topics
+                final_score = scorer.compute_final_score(scorer.RankSignals(
+                    base_relevance=analysis.score,
+                    novelty_score=novelty_score,
+                    source_quality=quality,
+                    topic_match=_compute_topic_match(ai_topics, allowed_topics),
+                    priority_boost=1.0 if any(t.lower() in priority_topics for t in ai_topics) else 0.0,
+                    is_blocked=any(t.lower() in {b.lower() for b in blocked_topics} for t in ai_topics),
+                ))
+
+            # Early Rejection Check
+            if final_score < settings.delivery_threshold:
+                rprint(f"[dim]REJECT: Score {final_score:.1f}: {title[:40]}...[/dim]")
+                if final_score >= 2.0: # Only log non-spam rejections
+                    log_rejection(user_id, title, source, url, final_score, "Below delivery threshold")
                 acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
                 return False
 
-            # ── Stage 4: Research Agent (RAG Deep Dive) ───────────────────────
+            # ── Stage 4: Research Agent (Deep Dive) ───────────────────────
             result = await loop.run_in_executor(
                 None,
                 agent.invoke,
@@ -186,15 +206,13 @@ async def process_article_v2(
             )
 
             # ── Stage 5: Save ─────────────────────────────────────────────────
-            from shared.db import save_article
-
             save_success = save_article(
                 {
                     "user_id": user_id,
                     "source_id": article.get("source_id"),
                     "title": title,
-                    "source_url": article.get("source_url"),
-                    "source": article.get("source"),
+                    "source_url": url,
+                    "source": source,
                     "content": content,
                     "embedding": embedding,
                     "novelty_score": novelty_score,
@@ -202,7 +220,7 @@ async def process_article_v2(
                     "score": final_score,
                     "summary": result["summary"],
                     "why_it_matters": result["why_it_matters"],
-                    "topics": result.get("topics", []),
+                    "topics": result.get("topics", ai_topics),
                     "published_at": article.get("published_at") or None,
                     "v2_processed": True,
                 }
@@ -213,7 +231,7 @@ async def process_article_v2(
                 return False
 
             acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
-            rprint(f"[green]Processed: {title[:50]}... [Score: {final_score}][/green]")
+            rprint(f"[green]PROCESSED: {title[:50]}... [Score: {final_score}][/green]")
             return True
 
         except Exception as e:

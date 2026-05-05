@@ -36,6 +36,34 @@ def save_article(article: Dict[str, Any]) -> bool:
         return False
 
 
+def log_rejection(
+    user_id: str,
+    title: str,
+    source: str,
+    source_url: str,
+    score: float,
+    reason: str,
+    metadata: Dict[str, Any] = None,
+) -> bool:
+    """Logs a rejected article for later audit and threshold tuning."""
+    try:
+        data = {
+            "user_id": user_id,
+            "title": title,
+            "source": source,
+            "source_url": source_url,
+            "score": score,
+            "rejection_reason": reason,
+            "metadata": metadata or {},
+        }
+        supabase.table("pipeline_audit_logs").insert(data).execute()
+        return True
+    except Exception as e:
+        # Don't fail the pipeline if logging fails, but log it.
+        logger.warning(f"Failed to log rejection to audit table: {e}")
+        return False
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_top_articles(limit: int = 10) -> List[Dict[str, Any]]:
     """
