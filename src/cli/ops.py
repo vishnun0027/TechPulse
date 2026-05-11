@@ -205,6 +205,20 @@ async def process_article_v2(
                 },
             )
 
+            # Quality Gate: If research failed, don't save to the main articles table
+            if result.get("research_failed"):
+                rprint(f"[red]RESEARCH FAILED: {title[:40]}... (Skipping)[/red]")
+                log_rejection(
+                    user_id, 
+                    title, 
+                    source, 
+                    url, 
+                    final_score, 
+                    f"Research Failed: {result.get('summary', 'Unknown error')}"
+                )
+                acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
+                return False
+
             # ── Stage 5: Save ─────────────────────────────────────────────────
             save_success = save_article(
                 {
@@ -229,6 +243,7 @@ async def process_article_v2(
             if not save_success:
                 logger.error(f"Failed to save processed article: {title}")
                 return False
+
 
             acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
             rprint(f"[green]PROCESSED: {title[:50]}... [Score: {final_score}][/green]")

@@ -112,7 +112,8 @@ def read_from_group(
 
     This follows a robust pattern:
     1. Try reading messages assigned to this consumer but not yet ACKed ('0').
-    2. If none, read brand new messages ('>').
+    2. Auto-acknowledge messages that were evicted from the stream (payload is None).
+    3. If no valid pending remain, read brand new messages ('>').
 
     Args:
         group_name: The consumer group name.
@@ -122,8 +123,32 @@ def read_from_group(
     Returns:
         List[Dict[str, Any]]: A list of messages with 'id' and 'data'.
     """
+
+    def _parse_and_clean(result) -> List[Dict[str, Any]]:
+        if not result or not result[0] or not result[0][1]:
+            return []
+
+        parsed = []
+        for entry in result[0][1]:
+            if not entry or len(entry) < 2:
+                continue
+            msg_id = entry[0]
+            fields_list = entry[1]
+
+            if fields_list is None:
+                # Crucial: The message was evicted by MAXLEN policy but is still pending.
+                # We MUST acknowledge it to prevent consumer starvation.
+                redis.execute(command=["XACK", STREAM_RAW, group_name, msg_id])
+                continue
+
+            fields = {
+                fields_list[i]: fields_list[i + 1] for i in range(0, len(fields_list), 2)
+            }
+            parsed.append({"id": msg_id, "data": fields})
+        return parsed
+
     # 1. Check pending for this specific consumer
-    result = redis.execute(
+    pending_raw = redis.execute(
         command=[
             "XREADGROUP",
             "GROUP",
@@ -136,10 +161,11 @@ def read_from_group(
             "0",
         ]
     )
+    messages = _parse_and_clean(pending_raw)
 
-    # 2. If no pending, read new for the whole group
-    if not result or not result[0][1]:
-        result = redis.execute(
+    # 2. If no valid pending messages, read new ones
+    if not messages:
+        new_raw = redis.execute(
             command=[
                 "XREADGROUP",
                 "GROUP",
@@ -152,23 +178,8 @@ def read_from_group(
                 ">",
             ]
         )
+        messages = _parse_and_clean(new_raw)
 
-    if not result or not result[0] or not result[0][1]:
-        return []
-
-    raw_messages = result[0][1]
-    messages = []
-    for entry in raw_messages:
-        if not entry or len(entry) < 2:
-            continue
-        msg_id = entry[0]
-        fields_list = entry[1]
-        if not fields_list:
-            continue
-        fields = {
-            fields_list[i]: fields_list[i + 1] for i in range(0, len(fields_list), 2)
-        }
-        messages.append({"id": msg_id, "data": fields})
     return messages
 
 

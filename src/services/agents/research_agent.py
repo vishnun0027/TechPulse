@@ -18,13 +18,15 @@ class ResearchState(TypedDict):
     summary: str
     why_it_matters: str
     topics: List[str]
+    research_failed: bool
 
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 def retrieve_history(state: ResearchState, supabase: Client) -> ResearchState:
     """Node 1: Pull top-3 related articles from Supabase pgvector."""
-
+    state["research_failed"] = False # Initialize
+    
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=6))
     def _execute_rpc():
         return supabase.rpc(
@@ -112,21 +114,32 @@ def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
             format_instructions=parser.get_format_instructions(),
         )
         
-        # Extract structured results
-        state["summary"] = result.get("summary", "")
-        state["why_it_matters"] = result.get("why_it_matters", "")
-        state["topics"] = result.get("topics", [])
+        # Extract structured results defensively
+        # JsonOutputParser with pydantic_object returns a dict or the object depending on environment
+        if hasattr(result, "dict"): # Pydantic v1
+            res_dict = result.dict()
+        elif hasattr(result, "model_dump"): # Pydantic v2
+            res_dict = result.model_dump()
+        else:
+            res_dict = result if isinstance(result, dict) else {}
+
+        state["summary"] = res_dict.get("summary", "")
+        state["why_it_matters"] = res_dict.get("why_it_matters", "")
+        state["topics"] = res_dict.get("topics", [])
         
+        # If the result is missing core fields, mark as failed
+        if not state["summary"] or not state["why_it_matters"]:
+            raise ValueError("Incomplete AI response")
+            
     except Exception as e:
         logger.error(f"Build summary failed for '{state['article_title']}': {e}")
-        # Robust fallback with detailed error tracking for the USER
-        error_type = type(e).__name__
-        state["summary"] = (
-            f"Summary generation failed ({error_type}).\n\n"
-            f"Original Content Preview: {state['article_text'][:300]}..."
-        )
-        state["why_it_matters"] = f"Error in AI analysis: {str(e)[:100]}"
+        state["research_failed"] = True
+        state["summary"] = f"Research phase failed: {str(e)}"
+        state["why_it_matters"] = "Skipping delivery due to processing error."
         state["topics"] = ["Error"]
+        
+    return state
+
         
     return state
 

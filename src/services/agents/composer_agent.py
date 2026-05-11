@@ -111,11 +111,20 @@ def compose_digest(
         all_pending.sort(key=lambda x: x["virtual_score"], reverse=True)
         articles = all_pending[:top_n]
 
-        # Group into themes
+        # Filter into themes with a quality check
         sections: dict[str, list] = {theme: [] for theme in SECTION_THEMES}
         for article in articles:
+            # Safety Filter: Skip items that look like AI failures
+            topics = article.get("topics") or []
+            summary = article.get("summary", "")
+            
+            if "Error" in topics or "generation failed" in summary.lower():
+                logger.warning(f"Skipping low-quality article in composer: {article.get('title')}")
+                continue
+
             theme = assign_theme(article)
             sections[theme].append(article)
+
 
         # Remove empty sections
         sections = {k: v for k, v in sections.items() if v}
