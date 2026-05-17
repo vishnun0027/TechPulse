@@ -12,3 +12,6 @@ wheels/
 
 # Temporary scratch scripts
 scratch/
+
+# VS Code workspace files
+techpulse-ai.code-workspace

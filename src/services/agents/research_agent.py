@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, END
 from langchain_groq import ChatGroq
-from typing import TypedDict, List, Dict
+from typing import TypedDict, List, Dict, Any
 from supabase import Client
 from loguru import logger
 from langchain_core.prompts import ChatPromptTemplate
@@ -26,7 +26,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 def retrieve_history(state: ResearchState, supabase: Client) -> ResearchState:
     """Node 1: Pull top-3 related articles from Supabase pgvector."""
     state["research_failed"] = False # Initialize
-    
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=6))
     def _execute_rpc():
         return supabase.rpc(
@@ -48,6 +48,62 @@ def retrieve_history(state: ResearchState, supabase: Client) -> ResearchState:
     return state
 
 
+from shared.ai_utils import retry_llm_call, clean_llm_json
+from langchain_core.runnables import RunnableLambda
+
+
+def _format_history_context(similar_history: List[Dict]) -> str:
+    """Helper to format similar article history for the LLM prompt."""
+    valid_history = [r for r in similar_history if isinstance(r, dict)]
+    if not valid_history:
+        return "No prior coverage found."
+    return "\n".join(
+        [
+            f"- [{(r.get('published_at') or 'recent')[:10]}] {r.get('title', 'Untitled')}: {r.get('why_it_matters', (r.get('summary') or '')[:120])}"
+            for r in valid_history
+        ]
+    )
+
+
+@retry_llm_call(max_attempts=3)
+def _execute_summary_chain(
+    llm: ChatGroq,
+    parser: JsonOutputParser,
+    history_context: str,
+    title: str,
+    text: str,
+) -> Dict[str, Any]:
+    """Node 2 helper: executes ChatGroq LLM chain with retries and output cleaning."""
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You are a precise tech analyst. Summarize technical articles with historical context. "
+                "The input may contain technical noise or fragments; focus on the core engineering value and facts. "
+                "{format_instructions}",
+            ),
+            (
+                "human",
+                "HISTORICAL CONTEXT:\n{history_context}\n\nARTICLE:\n{title}\n{text}",
+            ),
+        ]
+    )
+    chain = (
+        prompt
+        | llm
+        | RunnableLambda(lambda x: clean_llm_json(x.content))
+        | parser
+    )
+    return chain.invoke(
+        {
+            "history_context": history_context,
+            "title": title,
+            "text": text,
+            "format_instructions": parser.get_format_instructions(),
+        }
+    )
+
+
 def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
     """Node 2: RAG-enhanced summarization with historical context."""
     # Use high-capacity model for research (default: Qwen 32B for rate-limit efficiency)
@@ -57,65 +113,18 @@ def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
     )
     parser = JsonOutputParser(pydantic_object=ArticleAnalysis)
 
-    # ── Internal Helper: Call LLM with Retries ────────────────────────────────
-    from shared.ai_utils import retry_llm_call, clean_llm_json
-    from langchain_core.runnables import RunnableLambda
-
-    @retry_llm_call(max_attempts=3)
-    def call_llm(history_context, article_title, article_text, format_instructions):
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "You are a precise tech analyst. Summarize technical articles with historical context. "
-                    "The input may contain technical noise or fragments; focus on the core engineering value and facts. "
-                    "{format_instructions}",
-                ),
-                (
-                    "human",
-                    "HISTORICAL CONTEXT:\n{history_context}\n\nARTICLE:\n{article_title}\n{article_text}",
-                ),
-            ]
-        )
-        # Use RunnableLambda to clean the reasoning blocks before parsing
-        chain = (
-            prompt 
-            | llm 
-            | RunnableLambda(lambda x: clean_llm_json(x.content)) 
-            | parser
-        )
-        return chain.invoke(
-            {
-                "history_context": history_context,
-                "article_title": article_title,
-                "article_text": article_text,
-                "format_instructions": format_instructions,
-            }
-        )
-
-    # ── Node Execution ────────────────────────────────────────────────────────
     try:
-        history_context = ""
-        # Ensure similar_history only contains valid dicts
-        valid_history = [r for r in state.get("similar_history", []) if isinstance(r, dict)]
+        history_context = _format_history_context(state.get("similar_history", []))
 
-        if valid_history:
-            history_context = "\n".join(
-                [
-                    f"- [{(r.get('published_at') or 'recent')[:10]}] {r.get('title', 'Untitled')}: {r.get('why_it_matters', (r.get('summary') or '')[:120])}"
-                    for r in valid_history
-                ]
-            )
-
-        result = call_llm(
-            history_context=history_context or "No prior coverage found.",
-            article_title=state["article_title"],
-            article_text=state["article_text"][:4000],
-            format_instructions=parser.get_format_instructions(),
+        result = _execute_summary_chain(
+            llm=llm,
+            parser=parser,
+            history_context=history_context,
+            title=state["article_title"],
+            text=state["article_text"][:4000],
         )
-        
+
         # Extract structured results defensively
-        # JsonOutputParser with pydantic_object returns a dict or the object depending on environment
         if hasattr(result, "dict"): # Pydantic v1
             res_dict = result.dict()
         elif hasattr(result, "model_dump"): # Pydantic v2
@@ -126,21 +135,17 @@ def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
         state["summary"] = res_dict.get("summary", "")
         state["why_it_matters"] = res_dict.get("why_it_matters", "")
         state["topics"] = res_dict.get("topics", [])
-        
-        # If the result is missing core fields, mark as failed
+
         if not state["summary"] or not state["why_it_matters"]:
             raise ValueError("Incomplete AI response")
-            
+
     except Exception as e:
         logger.error(f"Build summary failed for '{state['article_title']}': {e}")
         state["research_failed"] = True
         state["summary"] = f"Research phase failed: {str(e)}"
         state["why_it_matters"] = "Skipping delivery due to processing error."
         state["topics"] = ["Error"]
-        
-    return state
 
-        
     return state
 
 

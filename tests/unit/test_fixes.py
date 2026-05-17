@@ -297,23 +297,23 @@ class TestOpsEarlyRejection:
 
     @pytest.mark.asyncio
     async def test_low_score_skips_research_agent(self):
-        from cli.ops import process_article_v2
+        from cli.pipeline import process_article_v2
         import asyncio
 
         # We will mock the external calls and force compute_final_score to return a low score
         with (
-            patch("cli.ops.embedder.embed_text") as mock_embed,
-            patch("cli.ops.deduplicator.is_near_duplicate", return_value=False),
-            patch("cli.ops.novelty.compute_novelty_score", return_value=0.5),
-            patch("cli.ops.clusterer.find_or_create_event", return_value="evt-1"),
+            patch("cli.pipeline.embedder.embed_text") as mock_embed,
+            patch("cli.pipeline.deduplicator.is_near_duplicate", return_value=False),
+            patch("cli.pipeline.novelty.compute_novelty_score", return_value=0.5),
+            patch("cli.pipeline.clusterer.find_or_create_event", return_value="evt-1"),
             patch(
-                "cli.ops.get_filter_config",
+                "cli.pipeline.get_filter_config",
                 return_value={"allowed": [], "priority": []},
             ),
-            patch("cli.ops.get_source_quality", return_value=0.5),
-            patch("cli.ops.scorer.compute_final_score", return_value=2.0),
-            patch("cli.ops.settings") as mock_settings,
-            patch("cli.ops.acknowledge_message") as mock_ack,
+            patch("cli.pipeline.get_source_quality", return_value=0.5),
+            patch("cli.pipeline.scorer.compute_final_score", return_value=2.0),
+            patch("cli.pipeline.settings") as mock_settings,
+            patch("cli.pipeline.acknowledge_message") as mock_ack,
         ):
             # Set delivery threshold higher than the returned score
             mock_settings.delivery_threshold = 3.5

@@ -104,50 +104,35 @@ def ensure_group_exists(group_name: str) -> None:
             raise e
 
 
+def _parse_and_clean_redis_stream(result, group_name: str) -> List[Dict[str, Any]]:
+    """Helper to parse raw Redis XREADGROUP output and handle evicted messages."""
+    if not result or not result[0] or not result[0][1]:
+        return []
+
+    parsed = []
+    for entry in result[0][1]:
+        if not entry or len(entry) < 2:
+            continue
+        msg_id = entry[0]
+        fields_list = entry[1]
+
+        if fields_list is None:
+            # Crucial: The message was evicted by MAXLEN policy but is still pending.
+            # We MUST acknowledge it to prevent consumer starvation.
+            redis.execute(command=["XACK", STREAM_RAW, group_name, msg_id])
+            continue
+
+        fields = {
+            fields_list[i]: fields_list[i + 1] for i in range(0, len(fields_list), 2)
+        }
+        parsed.append({"id": msg_id, "data": fields})
+    return parsed
+
+
 def read_from_group(
     group_name: str, consumer_name: str, count: int = 10
 ) -> List[Dict[str, Any]]:
-    """
-    Reads messages from a consumer group, prioritizing pending messages.
-
-    This follows a robust pattern:
-    1. Try reading messages assigned to this consumer but not yet ACKed ('0').
-    2. Auto-acknowledge messages that were evicted from the stream (payload is None).
-    3. If no valid pending remain, read brand new messages ('>').
-
-    Args:
-        group_name: The consumer group name.
-        consumer_name: The unique name for this worker instance.
-        count: Max number of messages to fetch.
-
-    Returns:
-        List[Dict[str, Any]]: A list of messages with 'id' and 'data'.
-    """
-
-    def _parse_and_clean(result) -> List[Dict[str, Any]]:
-        if not result or not result[0] or not result[0][1]:
-            return []
-
-        parsed = []
-        for entry in result[0][1]:
-            if not entry or len(entry) < 2:
-                continue
-            msg_id = entry[0]
-            fields_list = entry[1]
-
-            if fields_list is None:
-                # Crucial: The message was evicted by MAXLEN policy but is still pending.
-                # We MUST acknowledge it to prevent consumer starvation.
-                redis.execute(command=["XACK", STREAM_RAW, group_name, msg_id])
-                continue
-
-            fields = {
-                fields_list[i]: fields_list[i + 1] for i in range(0, len(fields_list), 2)
-            }
-            parsed.append({"id": msg_id, "data": fields})
-        return parsed
-
-    # 1. Check pending for this specific consumer
+    """Reads messages from a consumer group, prioritizing pending messages then new ones."""
     pending_raw = redis.execute(
         command=[
             "XREADGROUP",
@@ -161,9 +146,8 @@ def read_from_group(
             "0",
         ]
     )
-    messages = _parse_and_clean(pending_raw)
+    messages = _parse_and_clean_redis_stream(pending_raw, group_name)
 
-    # 2. If no valid pending messages, read new ones
     if not messages:
         new_raw = redis.execute(
             command=[
@@ -178,7 +162,7 @@ def read_from_group(
                 ">",
             ]
         )
-        messages = _parse_and_clean(new_raw)
+        messages = _parse_and_clean_redis_stream(new_raw, group_name)
 
     return messages
 

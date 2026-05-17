@@ -118,24 +118,44 @@ GROUP_NAME = "summarizer-group"
 CONSUMER_NAME = "worker-1"
 
 
+def _check_blocked(d: dict, config: dict) -> bool:
+    """Helper to check if the article content matches any blocked keywords."""
+    blocked = [t.lower() for t in config.get("blocked", [])]
+    text = (d.get("title", "") + " " + d.get("content", "")[:500]).lower()
+    return any(b in text for b in blocked if b)
+
+
+def _calculate_score_and_boost(result: ArticleAnalysis, config: dict) -> float:
+    """Helper to compute the final relevance score with interest boosts."""
+    final_score: float = result.score or 0.0
+    priority = [t.lower() for t in config.get("priority", [])]
+    if any(t.lower() in priority for t in result.topics):
+        final_score = min(10.0, final_score + 1.5)
+        logger.info("Priority Boost (+1.5) applied.")
+    return float(final_score)
+
+
+def _save_summarizer_article(d: dict, result: ArticleAnalysis, final_score: float, user_id: str) -> bool:
+    """Helper to persist analyzed article data to Supabase."""
+    article_data = {
+        "user_id": user_id,
+        "title": d.get("title"),
+        "source_url": d.get("source_url"),
+        "source": d.get("source"),
+        "content": d.get("content"),
+        "summary": result.summary,
+        "why_it_matters": result.why_it_matters,
+        "score": final_score,
+        "topics": result.topics,
+        "v2_processed": True,
+    }
+    return save_article(article_data)
+
+
 async def process_message(
     msg: Dict[str, Any], semaphore: asyncio.Semaphore
 ) -> Union[float, str, None]:
-    """
-    Processes a single raw message from the Redis stream.
-
-    1. Checks for blocked keywords.
-    2. Sends to LLM for scoring and summarizing.
-    3. Applies priority boosts for specific interest matches.
-    4. Saves the resulting article to Supabase.
-
-    Args:
-        msg: Raw Redis message dictionary.
-        semaphore: Async semaphore to control concurrency.
-
-    Returns:
-        Union[float, str, None]: Final score (float), 'blocked' status, or None on failure.
-    """
+    """Processes a single raw message from the Redis stream with filtering and AI scoring."""
     async with semaphore:
         d = msg["data"]
         msg_id = msg["id"]
@@ -143,19 +163,13 @@ async def process_message(
 
         try:
             loop = asyncio.get_running_loop()
-
-            # 1. Fetch config for user-specific filtering
             config = await loop.run_in_executor(None, get_filter_config, user_id)
 
-            # 2. Safety Check: Filter against blocked keywords
-            blocked = [t.lower() for t in config.get("blocked", [])]
-            text = (d.get("title", "") + " " + d.get("content", "")[:500]).lower()
-            if any(b in text for b in blocked if b):
+            if _check_blocked(d, config):
                 logger.info(f"Blocked in Summarizer: {d.get('title')[:30]}...")
                 acknowledge_message(GROUP_NAME, msg_id)
                 return "blocked"
 
-            # 3. Request AI Analysis
             result = await call_groq_async(
                 title=d.get("title", ""),
                 content=d.get("content", ""),
@@ -163,53 +177,26 @@ async def process_message(
                 allowed_topics=config.get("allowed", []),
             )
 
-            # 4. Apply Interest Priority Boost (V2: +1.5 points on 0-10 scale)
-            final_score: float = result.score or 0.0
-            priority = [t.lower() for t in config.get("priority", [])]
-            if any(t.lower() in priority for t in result.topics):
-                final_score = min(10.0, final_score + 1.5)
-                logger.info(
-                    f"Priority Boost (+1.5) applied to {d.get('title')[:30]}..."
-                )
+            final_score = _calculate_score_and_boost(result, config)
 
-            # 5. Early DB Rejection
-            # If the article is highly irrelevant (score < 3.0), don't waste DB storage.
-            # Acknowledge the message so it doesn't get reprocessed.
             if final_score < 3.0:
-                logger.info(
-                    f"Early rejection (score={final_score:.1f}) - skipping DB save: {d.get('title')[:30]}..."
-                )
+                logger.info(f"Early rejection (score={final_score:.1f}) - skipping DB: {d.get('title')[:30]}...")
                 acknowledge_message(GROUP_NAME, msg_id)
                 await asyncio.sleep(3)
-                return float(final_score)
+                return final_score
 
-            # 6. Persist to Supabase (V2 Schema)
-            article_data = {
-                "user_id": user_id,
-                "title": d.get("title"),
-                "source_url": d.get("source_url"),
-                "source": d.get("source"),
-                "content": d.get("content"),
-                "summary": result.summary,
-                "why_it_matters": result.why_it_matters,
-                "score": final_score,
-                "topics": result.topics,
-                "v2_processed": True,
-            }
-            success = await loop.run_in_executor(None, save_article, article_data)
+            success = await loop.run_in_executor(
+                None, _save_summarizer_article, d, result, final_score, user_id
+            )
 
             if success:
                 acknowledge_message(GROUP_NAME, msg_id)
-                logger.success(
-                    f"[score={final_score:.1f}] [{', '.join(result.topics)}] "
-                    f"{d.get('title', '')[:50]}"
-                )
+                logger.success(f"[score={final_score:.1f}] [{', '.join(result.topics)}] {d.get('title', '')[:50]}")
             else:
                 logger.error(f"Failed to save article {msg_id} to DB.")
 
-            # Rate limit compliance: ~20 RPM = 3s pause
             await asyncio.sleep(3)
-            return float(final_score)
+            return final_score
 
         except Exception as e:
             logger.error(f"Summarize failed for message {msg_id}: {e}")

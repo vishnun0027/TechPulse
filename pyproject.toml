@@ -57,3 +57,14 @@ dev = [
 pythonpath = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "PLR0915"]
+ignore = []
+
+[tool.ruff.lint.pylint]
+max-statements = 50

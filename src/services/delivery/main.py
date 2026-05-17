@@ -42,41 +42,28 @@ def group_by_themes(articles: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, 
 # ── Payload Builders ──────────────────────────────────────────────────────────
 
 
-def slack_payload(
-    grouped_articles: Dict[str, List[Dict[str, Any]]], intro: Optional[str] = None
-) -> Dict[str, Any]:
-    """
-    Generates a Slack Block Kit payload for the digest.
+def _get_summarizer_lag() -> int:
+    """Helper to fetch consumer group lag for summarizer-group."""
+    try:
+        info = redis.execute(command=["XINFO", "GROUPS", STREAM_RAW])
+        if info:
+            group_data = next((g for g in info if "summarizer-group" in str(g)), None)
+            if group_data:
+                lag_idx = group_data.index("lag")
+                return group_data[lag_idx + 1]
+    except Exception:
+        pass
+    return 0
 
-    Args:
-        grouped_articles: Dictionary of themed articles.
-        intro: Optional LLM-generated narrative introduction.
 
-    Returns:
-        Dict[str, Any]: Slack-compliant JSON payload.
-    """
-    blocks = [
-        {
-            "type": "header",
-            "text": {"type": "plain_text", "text": "TechPulse Smart Digest"},
-        }
-    ]
-
-    if intro:
-        blocks.append(
-            {"type": "section", "text": {"type": "mrkdwn", "text": f"_{intro}_"}}
-        )
-
-    blocks.append({"type": "divider"})
-
-    total_count = sum(len(v) for v in grouped_articles.values())
-
+def _build_slack_article_blocks(grouped_articles: Dict[str, List[Dict[str, Any]]]) -> list[dict]:
+    """Helper to build Slack Block Kit list of articles partitioned by themes."""
+    blocks = []
     for theme, articles in grouped_articles.items():
         blocks.append(
             {"type": "section", "text": {"type": "mrkdwn", "text": f"*{theme}*"}}
         )
         for a in articles:
-            # Truncate fields to stay within Slack's 3000-char block limit
             s_title = (a.get("title", "") or "")[:120]
             s_summary = (a.get("summary", "") or "")[:250]
             s_insight = (a.get("why_it_matters", "") or "")[:150]
@@ -92,7 +79,7 @@ def slack_payload(
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": (f"• <{s_url}|{s_title}>\n  {narrative}"),
+                        "text": f"• <{s_url}|{s_title}>\n  {narrative}",
                     },
                     "accessory": {
                         "type": "button",
@@ -102,32 +89,43 @@ def slack_payload(
                 }
             )
         blocks.append({"type": "divider"})
+    return blocks
 
-    # Add System Health context footer with accurate queue lag
-    try:
-        info = redis.execute(command=["XINFO", "GROUPS", STREAM_RAW])
-        lag = 0
-        if info:
-            group_data = next((g for g in info if "summarizer-group" in str(g)), None)
-            if group_data:
-                try:
-                    lag_idx = group_data.index("lag")
-                    lag = group_data[lag_idx + 1]
-                except Exception:
-                    lag = 0
+
+def slack_payload(
+    grouped_articles: Dict[str, List[Dict[str, Any]]], intro: Optional[str] = None
+) -> Dict[str, Any]:
+    """Generates a Slack Block Kit payload for the digest."""
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "TechPulse Smart Digest"},
+        }
+    ]
+
+    if intro:
         blocks.append(
-            {
-                "type": "context",
-                "elements": [
-                    {
-                        "type": "mrkdwn",
-                        "text": f"*System Health* - {total_count} delivered | {lag} items in processing queue",
-                    }
-                ],
-            }
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"_{intro}_"}}
         )
-    except Exception:
-        pass
+
+    blocks.append({"type": "divider"})
+    total_count = sum(len(v) for v in grouped_articles.values())
+
+    blocks.extend(_build_slack_article_blocks(grouped_articles))
+
+    # Add System Health context footer
+    lag = _get_summarizer_lag()
+    blocks.append(
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"*System Health* - {total_count} delivered | {lag} items in processing queue",
+                }
+            ],
+        }
+    )
 
     return {"blocks": blocks}
 
@@ -135,16 +133,7 @@ def slack_payload(
 def discord_payload_chunks(
     grouped_articles: Dict[str, List[Dict[str, Any]]], intro: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    """
-    Generates Discord Markdown payloads, split into chunks to stay under character limits.
-
-    Args:
-        grouped_articles: Dictionary of themed articles.
-        intro: Optional LLM-generated narrative introduction.
-
-    Returns:
-        List[Dict[str, Any]]: List of Discord message payloads.
-    """
+    """Generates Discord Markdown payloads, split into chunks to stay under character limits."""
     chunks = []
     current = "# TechPulse Smart Digest\n\n"
     if intro:
@@ -153,7 +142,6 @@ def discord_payload_chunks(
 
     for theme, articles in grouped_articles.items():
         theme_header = f"## {theme}\n"
-        # Check for Discord 2000 char limit
         if len(current) + len(theme_header) > 1900:
             chunks.append({"content": current})
             current = theme_header
@@ -180,35 +168,92 @@ def discord_payload_chunks(
         chunks.append({"content": current})
 
     # Add Stats Footer to the last chunk
-    try:
-        # Get Consumer Group info for more accurate 'pending' count
-        info = redis.execute(command=["XINFO", "GROUPS", STREAM_RAW])
-        lag = 0
-        if info:
-            # Look for 'summarizer-group'
-            group_data = next((g for g in info if "summarizer-group" in str(g)), None)
-            if group_data:
-                # Upstash REST returns a list of lists: [['name', 'summarizer-group', 'lag', 0, ...]]
-                # Find the 'lag' index
-                try:
-                    lag_idx = group_data.index("lag")
-                    lag = group_data[lag_idx + 1]
-                except Exception:
-                    lag = 0
+    lag = _get_summarizer_lag()
+    footer = f"\n---\n**System Health**: {total_count} articles | {lag} items in processing queue"
 
-        footer = f"\n---\n**System Health**: {total_count} articles | {lag} items in processing queue"
-
-        if len(chunks[-1]["content"]) + len(footer) < 1950:
-            chunks[-1]["content"] += footer
-        else:
-            chunks.append({"content": footer})
-    except Exception:
-        pass
+    if len(chunks[-1]["content"]) + len(footer) < 1950:
+        chunks[-1]["content"] += footer
+    else:
+        chunks.append({"content": footer})
 
     return chunks
 
 
-# ── Delivery Manager ──────────────────────────────────────────────────────────
+def _get_delivery_data(target_user_id: Optional[str] = None, digest: Optional[Dict[str, Any]] = None) -> dict:
+    """Prepares the mapped articles by user for the delivery run."""
+    if digest:
+        return {digest["user_id"]: digest}
+
+    all_articles = (
+        supabase.table("articles")
+        .select(
+            "user_id, title, summary, why_it_matters, source_url, source, score, topics"
+        )
+        .gte(
+            "created_at",
+            (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(),
+        )
+        .eq("is_delivered", False)
+        .gte("score", 3.0)
+        .execute()
+    ).data or []
+
+    if target_user_id:
+        all_articles = [a for a in all_articles if a["user_id"] == target_user_id]
+
+    articles_by_user = defaultdict(list)
+    for a in all_articles:
+        uid = a.get("user_id")
+        if uid:
+            articles_by_user[uid].append(a)
+    return articles_by_user
+
+
+def _deliver_to_user_webhooks(user_id: str, profile: dict, content: Any, digest: Optional[dict]) -> int:
+    """Helper to handle webhook delivery to a single user (Slack + Discord). Returns count delivered."""
+    user_name = profile.get("full_name") or "Tech Explorer"
+
+    if digest:
+        grouped = digest["sections"]
+        intro = digest.get("intro")
+    else:
+        grouped = group_by_themes(content)
+        intro = None
+
+    total_to_send = sum(len(v) for v in grouped.values())
+    logger.info(f"Delivering {total_to_send} articles to {user_name} ({user_id})...")
+
+    slack_url = profile.get("slack_webhook_url")
+    discord_url = profile.get("discord_webhook_url")
+
+    if not slack_url and not discord_url:
+        logger.info(f"User {user_id} has no webhooks configured.")
+        return 0
+
+    if slack_url:
+        payload = slack_payload(grouped, intro=intro)
+        payload["blocks"][0]["text"]["text"] = f"Hi {user_name}, here is your TechPulse Digest"
+        try:
+            httpx.post(slack_url, json=payload, timeout=10).raise_for_status()
+            logger.success(f"Slack (User {user_id})")
+        except Exception as e:
+            logger.error(f"Slack failed for {user_id}: {e}")
+
+    if discord_url:
+        chunks = discord_payload_chunks(grouped, intro=intro)
+        if chunks:
+            chunks[0]["content"] = chunks[0]["content"].replace("Smart Digest", f"Digest for {user_name}")
+        for i, chunk in enumerate(chunks):
+            try:
+                httpx.post(discord_url, json=chunk, timeout=10).raise_for_status()
+                logger.success(f"Discord chunk {i + 1}/{len(chunks)} (User {user_id})")
+            except Exception as e:
+                logger.error(f"Discord chunk {i + 1} failed for {user_id}: {e}")
+
+    delivered_urls = [a["source_url"] for theme_list in grouped.values() for a in theme_list]
+    mark_as_delivered(delivered_urls, user_id)
+    update_source_delivery(delivered_urls, user_id)
+    return len(delivered_urls)
 
 
 def deliver(
@@ -220,38 +265,10 @@ def deliver(
     If digest is provided, it uses the pre-built narrative structure.
     Otherwise, it fetches pending articles and groups them automatically.
     """
-    if digest:
-        # V2 Path: Use pre-built digest
-        articles_by_user = {digest["user_id"]: digest}
-    else:
-        # V1/Legacy Path: Fetch all pending
-        all_articles = (
-            supabase.table("articles")
-            .select(
-                "user_id, title, summary, why_it_matters, source_url, source, score, topics"
-            )
-            .gte(
-                "created_at",
-                (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(),
-            )
-            .eq("is_delivered", False)
-            .gte("score", 3.0)
-            .execute()
-        ).data or []
-
-        if target_user_id:
-            all_articles = [a for a in all_articles if a["user_id"] == target_user_id]
-
-        if not all_articles:
-            logger.warning("No articles ready to send")
-            return
-
-        # Map articles to users for multi-tenant delivery
-        articles_by_user = defaultdict(list)
-        for a in all_articles:
-            user_id = a.get("user_id")
-            if user_id:
-                articles_by_user[user_id].append(a)
+    articles_by_user = _get_delivery_data(target_user_id, digest)
+    if not articles_by_user:
+        logger.warning("No articles ready to send")
+        return
 
     tenant_profiles = {p["user_id"]: p for p in get_tenant_profiles()}
     total_delivered_count = 0
@@ -262,70 +279,9 @@ def deliver(
             logger.warning(f"User {user_id} has articles but no profile, skipping.")
             continue
 
-        user_name = profile.get("full_name") or "Tech Explorer"
+        delivered_count = _deliver_to_user_webhooks(user_id, profile, content, digest)
+        total_delivered_count += delivered_count
 
-        if digest:
-            grouped = digest["sections"]
-            intro = digest.get("intro")
-        else:
-            grouped = group_by_themes(content)
-            intro = None
-
-        total_to_send = sum(len(v) for v in grouped.values())
-
-        logger.info(
-            f"Delivering {total_to_send} articles to {user_name} ({user_id})..."
-        )
-
-        slack_url = profile.get("slack_webhook_url")
-        discord_url = profile.get("discord_webhook_url")
-
-        if not slack_url and not discord_url:
-            logger.info(f"User {user_id} has no webhooks configured.")
-            continue
-
-        # 1. Deliver to Slack
-        if slack_url:
-            payload = slack_payload(grouped, intro=intro)
-            payload["blocks"][0]["text"]["text"] = (
-                f"Hi {user_name}, here is your TechPulse Digest"
-            )
-            try:
-                r = httpx.post(slack_url, json=payload, timeout=10)
-                r.raise_for_status()
-                logger.success(f"Slack (User {user_id})")
-            except Exception as e:
-                logger.error(f"Slack failed for {user_id}: {e}")
-
-        # 2. Deliver to Discord
-        if discord_url:
-            chunks = discord_payload_chunks(grouped, intro=intro)
-            if chunks:
-                chunks[0]["content"] = chunks[0]["content"].replace(
-                    "Smart Digest", f"Digest for {user_name}"
-                )
-
-            for i, chunk in enumerate(chunks):
-                try:
-                    r = httpx.post(discord_url, json=chunk, timeout=10)
-                    r.raise_for_status()
-                    logger.success(
-                        f"Discord chunk {i + 1}/{len(chunks)} (User {user_id})"
-                    )
-                except Exception as e:
-                    logger.error(f"Discord chunk {i + 1} failed for {user_id}: {e}")
-
-        # 3. Mark batch as delivered + update source quality stats
-        delivered_urls = [
-            a["source_url"] for theme_list in grouped.values() for a in theme_list
-        ]
-        mark_as_delivered(delivered_urls, user_id)
-        update_source_delivery(
-            delivered_urls, user_id
-        )  # activates source_quality signal
-        total_delivered_count += len(delivered_urls)
-
-    # 4. Record run telemetry
     log_telemetry(
         "delivery",
         {"count": total_delivered_count, "users_reached": len(articles_by_user)},

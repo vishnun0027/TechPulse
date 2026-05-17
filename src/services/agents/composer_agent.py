@@ -66,6 +66,58 @@ def assign_theme(article: dict) -> str:
     return "Quiet Signals"
 
 
+def _fetch_and_boost_articles(supabase: Client, user_id: str, top_n: int) -> list[dict]:
+    """Fetches undelivered articles and applies the Seniority Boost algorithm."""
+    result = (
+        supabase.table("articles")
+        .select(
+            "id, title, summary, why_it_matters, source_url, score, novelty_score, created_at"
+        )
+        .eq("user_id", user_id)
+        .eq("is_delivered", False)
+        .gte("score", DELIVERY_THRESHOLD)
+        .order("score", desc=True)
+        .limit(200)
+        .execute()
+    )
+
+    all_pending = result.data or []
+    if not all_pending:
+        return []
+
+    # Apply "Seniority Boost": +1.0 point for every 24 hours undelivered
+    # This guarantees that even low-score articles eventually rise to the top
+    now = datetime.now(timezone.utc)
+    for article in all_pending:
+        created_at = datetime.fromisoformat(article["created_at"].replace("Z", "+00:00"))
+        age_hours = (now - created_at).total_seconds() / 3600
+        age_boost = age_hours / 24.0  # 1 point per day
+        article["virtual_score"] = article.get("score", 0) + age_boost
+
+    # Sort by virtual score and take top_n
+    all_pending.sort(key=lambda x: x["virtual_score"], reverse=True)
+    return all_pending[:top_n]
+
+
+def _group_articles_by_theme(articles: list[dict]) -> dict[str, list]:
+    """Groups articles into themes with a safety filter check."""
+    sections: dict[str, list] = {theme: [] for theme in SECTION_THEMES}
+    for article in articles:
+        # Safety Filter: Skip items that look like AI failures
+        topics = article.get("topics") or []
+        summary = article.get("summary", "")
+
+        if "Error" in topics or "generation failed" in summary.lower():
+            logger.warning(f"Skipping low-quality article in composer: {article.get('title')}")
+            continue
+
+        theme = assign_theme(article)
+        sections[theme].append(article)
+
+    # Remove empty sections
+    return {k: v for k, v in sections.items() if v}
+
+
 def compose_digest(
     supabase: Client, groq_client: Groq, user_id: str, top_n: int = 12
 ) -> dict:
@@ -75,59 +127,11 @@ def compose_digest(
     Returns a structured digest dict.
     """
     try:
-        # Fetch top-ranked, undelivered articles
-        # Note: the blueprint uses 'delivered' but existing schema uses 'is_delivered'
-        # I'll use 'is_delivered' to match existing DB, but I'll check migrations again.
-        # Wait, my migrations added 'v2_processed' but didn't change 'is_delivered'.
-        # Fetch all undelivered articles with a score above threshold (no limit yet)
-        # We fetch all so we can apply a "seniority boost" to older articles
-        result = (
-            supabase.table("articles")
-            .select(
-                "id, title, summary, why_it_matters, source_url, score, novelty_score, created_at"
-            )
-            .eq("user_id", user_id)
-            .eq("is_delivered", False)
-            .gte("score", DELIVERY_THRESHOLD)
-            .order("score", desc=True)
-            .limit(200)
-            .execute()
-        )
-
-        all_pending = result.data or []
-        if not all_pending:
+        articles = _fetch_and_boost_articles(supabase, user_id, top_n)
+        if not articles:
             return {"empty": True}
 
-        # Apply "Seniority Boost": +1.0 point for every 24 hours undelivered
-        # This guarantees that even low-score articles eventually rise to the top 10
-        now = datetime.now(timezone.utc)
-        for article in all_pending:
-            created_at = datetime.fromisoformat(article["created_at"].replace("Z", "+00:00"))
-            age_hours = (now - created_at).total_seconds() / 3600
-            age_boost = age_hours / 24.0  # 1 point per day
-            article["virtual_score"] = article.get("score", 0) + age_boost
-
-        # Sort by virtual score and take top_n
-        all_pending.sort(key=lambda x: x["virtual_score"], reverse=True)
-        articles = all_pending[:top_n]
-
-        # Filter into themes with a quality check
-        sections: dict[str, list] = {theme: [] for theme in SECTION_THEMES}
-        for article in articles:
-            # Safety Filter: Skip items that look like AI failures
-            topics = article.get("topics") or []
-            summary = article.get("summary", "")
-            
-            if "Error" in topics or "generation failed" in summary.lower():
-                logger.warning(f"Skipping low-quality article in composer: {article.get('title')}")
-                continue
-
-            theme = assign_theme(article)
-            sections[theme].append(article)
-
-
-        # Remove empty sections
-        sections = {k: v for k, v in sections.items() if v}
+        sections = _group_articles_by_theme(articles)
 
         # Generate digest narrative intro via LLM
         article_titles = "\n".join([f"- {a['title']}" for a in articles[:8]])

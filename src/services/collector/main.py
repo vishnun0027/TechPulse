@@ -18,6 +18,7 @@ from shared.db import (
     get_rss_sources,
     update_source_ingestion,
 )
+from typing import Any
 from services.collector.filter import is_relevant
 
 # Common real browser User-Agents for rotation
@@ -29,6 +30,86 @@ USER_AGENTS = [
 ]
 
 
+def _fetch_rss_feed(url: str, source_name: str) -> str | None:
+    """Helper to fetch feed content with multiple protocol/SSL fallbacks."""
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+
+    response = None
+    try:
+        with httpx.Client(http2=True, timeout=20.0, follow_redirects=True) as local_client:
+            response = local_client.get(url, headers=headers)
+    except (httpx.ProtocolError, httpx.RemoteProtocolError):
+        logger.debug(f"[{source_name}] HTTP/2 failed, retrying with HTTP/1.1")
+        with httpx.Client(http2=False, timeout=20.0, follow_redirects=True) as local_client:
+            response = local_client.get(url, headers=headers)
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        if "CERTIFICATE_VERIFY_FAILED" in str(e):
+            logger.warning(f"[{source_name}] SSL verify failed, retrying without verification")
+            with httpx.Client(http2=False, timeout=20.0, follow_redirects=True, verify=False) as local_client:
+                response = local_client.get(url, headers=headers)
+        else:
+            raise e
+
+    if not response:
+        logger.error(f"[{source_name}] No response received.")
+        return None
+
+    if response.status_code == 403:
+        logger.warning(f"[{source_name}] 403 Forbidden. Skipping: {url}")
+        return None
+
+    response.raise_for_status()
+
+    feed_text = response.text
+    if not feed_text and response.content:
+        feed_text = response.content.decode("utf-8", errors="replace")
+    return feed_text
+
+
+def _process_feed_entries(feed: Any, src: dict, user_id: str, source_name: str, cutoff: datetime) -> tuple[int, int]:
+    """Helper to process a batch of feed entries, filter them, and push to Redis."""
+    queued = 0
+    skipped = 0
+    for entry in feed.entries[:15]:
+        link = entry.get("link") or entry.get("id", "")
+        title = entry.get("title", "")[:300]
+        content = entry.get("summary", "")[:2000]
+
+        pub_date = entry.get("published_parsed") or entry.get("updated_parsed")
+        pub_date_iso: str | None = None
+        if pub_date:
+            dt = datetime.fromtimestamp(calendar.timegm(pub_date), tz=timezone.utc)
+            if dt < cutoff:
+                logger.debug(f"SKIP (Old): {title[:30]}...")
+                continue
+            pub_date_iso = dt.isoformat()
+
+        if not link or check_seen(link, user_id) or check_title_seen(title, user_id):
+            continue
+
+        if not is_relevant(title, content, user_id):
+            skipped += 1
+            continue
+
+        push_to_stream({
+            "user_id": user_id, "title": title, "source_url": link,
+            "source": source_name, "source_id": src.get("id"), "content": content,
+            "published_at": pub_date_iso or "",
+        })
+        mark_seen(link, user_id)
+        mark_title_seen(title, user_id)
+        update_source_ingestion(src.get("id"), user_id)
+        queued += 1
+    return queued, skipped
+
+
 def collect() -> None:
     logger.info("Starting collection...")
     total_queued: int = 0
@@ -36,107 +117,35 @@ def collect() -> None:
     sources = get_rss_sources()
     cutoff = datetime.now(timezone.utc) - timedelta(days=settings.collection_interval_days)
 
-    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-        for src in sources:
-            user_id = src.get("user_id")
-            source_name = src.get("name", "Unknown")
-            url = src["url"]
+    for src in sources:
+        user_id = src.get("user_id")
+        source_name = src.get("name", "Unknown")
+        url = src["url"]
 
-            if not user_id:
+        if not user_id:
+            continue
+
+        try:
+            feed_text = _fetch_rss_feed(url, source_name)
+            if not feed_text:
                 continue
 
-            try:
-                # Advanced browser-mimicry headers
-                headers = {
-                    "User-Agent": random.choice(USER_AGENTS),
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.5",
-                    "Accept-Encoding": "gzip, deflate, br",
-                    "Cache-Control": "no-cache",
-                    "Pragma": "no-cache",
-                }
+            feed = feedparser.parse(feed_text)
 
-                # Robust fetching with multiple fallbacks:
-                # 1. Try HTTP/2 (modern, efficient)
-                # 2. Try HTTP/1.1 (fallback for protocol errors)
-                # 3. Try without SSL verification (last resort for environment-specific CA issues)
-                response = None
-                try:
-                    with httpx.Client(http2=True, timeout=20.0, follow_redirects=True) as local_client:
-                        response = local_client.get(url, headers=headers)
-                except (httpx.ProtocolError, httpx.RemoteProtocolError):
-                    logger.debug(f"[{source_name}] HTTP/2 failed, retrying with HTTP/1.1")
-                    with httpx.Client(http2=False, timeout=20.0, follow_redirects=True) as local_client:
-                        response = local_client.get(url, headers=headers)
-                except (httpx.ConnectError, httpx.ConnectTimeout) as e:
-                    if "CERTIFICATE_VERIFY_FAILED" in str(e):
-                        logger.warning(f"[{source_name}] SSL verify failed, retrying without verification")
-                        with httpx.Client(http2=False, timeout=20.0, follow_redirects=True, verify=False) as local_client:
-                            response = local_client.get(url, headers=headers)
-                    else:
-                        raise e
+            if not feed.entries:
+                snippet = feed_text[:200].replace("\n", " ").strip()
+                logger.warning(f"[{source_name}] No entries found. Body starts with: {snippet}")
+                continue
 
-                if not response:
-                    logger.error(f"[{source_name}] No response received.")
-                    continue
+            queued, skipped = _process_feed_entries(feed, src, user_id, source_name, cutoff)
+            total_queued += queued
+            total_skipped += skipped
 
-                if response.status_code == 403:
-                    logger.warning(f"[{source_name}] 403 Forbidden. Skipping: {url}")
-                    continue
+            logger.info(f"[{source_name}] done.")
+            time.sleep(random.uniform(3.0, 7.0))  # Jitter to look human
 
-                response.raise_for_status()
-
-                # Robust decoding: handle auto-decompression results
-                feed_text = response.text
-                if not feed_text and response.content:
-                    feed_text = response.content.decode("utf-8", errors="replace")
-
-                feed = feedparser.parse(feed_text)
-
-                # Snapshot debugger for failed parses
-                if not feed.entries:
-                    snippet = feed_text[:200].replace("\n", " ").strip()
-                    logger.warning(f"[{source_name}] No entries found. Body starts with: {snippet}")
-                    continue
-
-                for entry in feed.entries[:15]:
-                    # Standard RSS uses 'link', ArXiv API uses 'id'
-                    link = entry.get("link") or entry.get("id", "")
-                    title = entry.get("title", "")[:300]
-                    content = entry.get("summary", "")[:2000]
-
-                    # Freshness check
-                    pub_date = entry.get("published_parsed") or entry.get("updated_parsed")
-                    pub_date_iso: str | None = None
-                    if pub_date:
-                        dt = datetime.fromtimestamp(calendar.timegm(pub_date), tz=timezone.utc)
-                        if dt < cutoff:
-                            logger.debug(f"SKIP (Old): {title[:30]}...")
-                            continue
-                        pub_date_iso = dt.isoformat()
-
-                    if not link or check_seen(link, user_id) or check_title_seen(title, user_id):
-                        continue
-
-                    if not is_relevant(title, content, user_id):
-                        total_skipped += 1
-                        continue
-
-                    push_to_stream({
-                        "user_id": user_id, "title": title, "source_url": link,
-                        "source": source_name, "source_id": src.get("id"), "content": content,
-                        "published_at": pub_date_iso or "",
-                    })
-                    mark_seen(link, user_id)
-                    mark_title_seen(title, user_id)
-                    update_source_ingestion(src.get("id"), user_id)
-                    total_queued += 1
-
-                logger.info(f"[{source_name}] done.")
-                time.sleep(random.uniform(3.0, 7.0))  # Jitter to look human
-
-            except Exception as e:
-                logger.error(f"[{source_name}] failed: {e}")
+        except Exception as e:
+            logger.error(f"[{source_name}] failed: {e}")
 
     logger.success(f"Collection complete - {total_queued} queued, {total_skipped} skipped")
     log_telemetry("collector", {"total_sources": len(sources), "queued": total_queued, "skipped": total_skipped})

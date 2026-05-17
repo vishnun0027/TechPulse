@@ -15,25 +15,21 @@ _stats_cache: dict = {}
 _CACHE_TTL = 15  # seconds — refresh stats at most once every 15s
 
 
-def get_stats():
-    """Fetches pipeline stats with a 15-second TTL cache to avoid hammering the DB."""
-    now = time.monotonic()
-    if _stats_cache and now - _stats_cache.get("_ts", 0) < _CACHE_TTL:
-        return _stats_cache["data"]
-
-    # 1. Redis Stats — real consumer group lag, not XLEN
+def _get_redis_stats():
+    """Fetches consumer group lag and stuck message count from Redis."""
     try:
         info = redis.execute(command=["XINFO", "GROUPS", STREAM_RAW])
-        lag = stuck = 0
         if info:
             fields = info[0]
             d = {fields[i]: fields[i + 1] for i in range(0, len(fields), 2)}
-            lag = d.get("lag", 0)
-            stuck = d.get("pending", 0)
+            return d.get("lag", 0), d.get("pending", 0)
     except Exception:
-        lag = stuck = "Error"
+        pass
+    return "Error", "Error"
 
-    # 2. Database Stats — batched with a single broad select to reduce round-trips
+
+def _get_db_stats():
+    """Fetches total, delivered, and ready article counts from Supabase."""
     try:
         total_res = supabase.table("articles").select("count", count="exact").execute()
         total = total_res.count or 0
@@ -56,12 +52,15 @@ def get_stats():
             .execute()
         )
         ready = ready_res.count or 0
+        return total, delivered, ready
     except Exception:
-        total = delivered = ready = "Error"
+        return "Error", "Error", "Error"
 
-    # 3. Telemetry (Recent Runs)
+
+def _get_telemetry_stats():
+    """Fetches recent telemetry logs."""
     try:
-        telemetry = (
+        return (
             supabase.table("telemetry")
             .select("*")
             .order("timestamp", desc=True)
@@ -71,12 +70,53 @@ def get_stats():
             or []
         )
     except Exception:
-        telemetry = []
+        return []
+
+
+def get_stats():
+    """Fetches pipeline stats with a 15-second TTL cache to avoid hammering the DB."""
+    now = time.monotonic()
+    if _stats_cache and now - _stats_cache.get("_ts", 0) < _CACHE_TTL:
+        return _stats_cache["data"]
+
+    lag, stuck = _get_redis_stats()
+    total, delivered, ready = _get_db_stats()
+    telemetry = _get_telemetry_stats()
 
     result = (lag, stuck, total, delivered, ready, telemetry)
     _stats_cache["data"] = result
     _stats_cache["_ts"] = now
     return result
+
+
+def _create_stats_table(lag, stuck, total, delivered, ready) -> Table:
+    """Helper to build the Rich stats table."""
+    stats_table = Table(title="System Pipeline")
+    stats_table.add_column("Metric", style="magenta")
+    stats_table.add_column("Value", style="bold green")
+
+    stats_table.add_row("Unread in Queue", str(lag))
+    stats_table.add_row("Stuck (Unacknowledged)", str(stuck))
+    stats_table.add_row("Total in Database", str(total))
+    stats_table.add_row("Total Delivered", str(delivered))
+    stats_table.add_row("Ready for Delivery (Top 24h)", str(ready))
+    return stats_table
+
+
+def _create_logs_table(telemetry) -> Table:
+    """Helper to build the Rich telemetry logs table."""
+    logs_table = Table(title="Recent Activity (Telemetry)")
+    logs_table.add_column("Time", style="dim")
+    logs_table.add_column("Service")
+    logs_table.add_column("Metrics")
+
+    for entry in telemetry:
+        ts = datetime.fromisoformat(entry["timestamp"]).strftime("%H:%M:%S")
+        svc = entry["service"].capitalize()
+        metrics = ", ".join([f"{k}: {v}" for k, v in entry["metrics"].items()])
+        color = "green" if entry.get("success", True) else "red"
+        logs_table.add_row(ts, f"[{color}]{svc}[/]", metrics)
+    return logs_table
 
 
 def generate_layout(stats):
@@ -89,41 +129,15 @@ def generate_layout(stats):
         Layout(name="footer", size=3),
     )
 
-    # Header
     layout["header"].update(Panel("TechPulse AI — System Monitor", style="bold cyan"))
-
-    # Main content split into stats and logs
     layout["main"].split_row(Layout(name="stats"), Layout(name="logs"))
 
-    # Stats Table
-    stats_table = Table(title="System Pipeline")
-    stats_table.add_column("Metric", style="magenta")
-    stats_table.add_column("Value", style="bold green")
-
-    stats_table.add_row("Unread in Queue", str(lag))
-    stats_table.add_row("Stuck (Unacknowledged)", str(stuck))
-    stats_table.add_row("Total in Database", str(total))
-    stats_table.add_row("Total Delivered", str(delivered))
-    stats_table.add_row("Ready for Delivery (Top 24h)", str(ready))
-
+    stats_table = _create_stats_table(lag, stuck, total, delivered, ready)
     layout["stats"].update(Panel(stats_table, border_style="blue"))
 
-    # Logs Table
-    logs_table = Table(title="Recent Activity (Telemetry)")
-    logs_table.add_column("Time", style="dim")
-    logs_table.add_column("Service")
-    logs_table.add_column("Metrics")
-
-    for entry in telemetry:
-        ts = datetime.fromisoformat(entry["timestamp"]).strftime("%H:%M:%S")
-        svc = entry["service"].capitalize()
-        metrics = ", ".join([f"{k}: {v}" for k, v in entry["metrics"].items()])
-        color = "green" if entry.get("success", True) else "red"
-        logs_table.add_row(ts, f"[{color}]{svc}[/]", metrics)
-
+    logs_table = _create_logs_table(telemetry)
     layout["logs"].update(Panel(logs_table, border_style="blue"))
 
-    # Footer
     layout["footer"].update(
         Panel(
             f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", style="dim"

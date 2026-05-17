@@ -31,6 +31,68 @@ def _parse_embedding(embedding: any) -> list[float]:
     return []
 
 
+def _update_existing_event_centroid(
+    supabase: Client, event_id: str, current_count: int, embedding: list[float]
+) -> None:
+    """Helper to update the centroid of an existing event cluster incrementally."""
+    centroid_res = (
+        supabase.table("article_events")
+        .select("centroid_embedding")
+        .eq("id", event_id)
+        .execute()
+    )
+
+    raw_centroid = (centroid_res.data or [{}])[0].get("centroid_embedding")
+    old_centroid = _parse_embedding(raw_centroid) or embedding
+    n = current_count
+
+    # Guard against dimension mismatch (e.g. after a model change)
+    if len(old_centroid) != len(embedding):
+        logger.warning(
+            f"Centroid dimension mismatch ({len(old_centroid)} vs {len(embedding)}) "
+            f"for event {event_id} - resetting centroid to new embedding."
+        )
+        new_centroid = embedding
+    else:
+        new_centroid = [
+            round((old_centroid[i] * n + embedding[i]) / (n + 1), 8)
+            for i in range(len(embedding))
+        ]
+
+    supabase.table("article_events").update(
+        {
+            "article_count": n + 1,
+            "centroid_embedding": new_centroid,
+            "updated_at": "now()",
+        }
+    ).eq("id", event_id).execute()
+
+
+def _create_fallback_event(
+    supabase: Client, user_id: str, article_title: str, embedding: list[float]
+) -> str | None:
+    """Helper to create a brand new event cluster."""
+    try:
+        event_title = _truncate_event_title(article_title)
+        new_event = (
+            supabase.table("article_events")
+            .insert(
+                {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "title": event_title,
+                    "centroid_embedding": embedding,
+                    "article_count": 1,
+                }
+            )
+            .execute()
+        )
+        return new_event.data[0]["id"]
+    except Exception as e:
+        logger.error(f"Failed to create new article event: {e}")
+        return None
+
+
 def find_or_create_event(
     supabase: Client,
     groq_client: any,  # kept for API compatibility but no longer used
@@ -57,41 +119,7 @@ def find_or_create_event(
             event_id = result.data[0]["id"]
             current_count = result.data[0].get("article_count", 1)
 
-            # Update centroid using a running (incremental) average:
-            #   new_centroid[i] = (old[i] * n + new[i]) / (n + 1)
-            # This keeps the centroid representative as the cluster grows.
-            centroid_res = (
-                supabase.table("article_events")
-                .select("centroid_embedding")
-                .eq("id", event_id)
-                .execute()
-            )
-
-            raw_centroid = (centroid_res.data or [{}])[0].get("centroid_embedding")
-            old_centroid = _parse_embedding(raw_centroid) or embedding
-            n = current_count
-
-            # Guard against dimension mismatch (e.g. after a model change)
-            if len(old_centroid) != len(embedding):
-                logger.warning(
-                    f"Centroid dimension mismatch ({len(old_centroid)} vs {len(embedding)}) "
-                    f"for event {event_id} - resetting centroid to new embedding."
-                )
-                new_centroid = embedding
-            else:
-                new_centroid = [
-                    round((old_centroid[i] * n + embedding[i]) / (n + 1), 8)
-                    for i in range(len(embedding))
-                ]
-
-            supabase.table("article_events").update(
-                {
-                    "article_count": n + 1,
-                    "centroid_embedding": new_centroid,
-                    "updated_at": "now()",
-                }
-            ).eq("id", event_id).execute()
-
+            _update_existing_event_centroid(supabase, event_id, current_count, embedding)
             return event_id
 
     except Exception as e:
@@ -101,22 +129,4 @@ def find_or_create_event(
         )
 
     # Fallback: create a new event using a truncated article title.
-    try:
-        event_title = _truncate_event_title(article_title)
-        new_event = (
-            supabase.table("article_events")
-            .insert(
-                {
-                    "id": str(uuid.uuid4()),
-                    "user_id": user_id,
-                    "title": event_title,
-                    "centroid_embedding": embedding,
-                    "article_count": 1,
-                }
-            )
-            .execute()
-        )
-        return new_event.data[0]["id"]
-    except Exception as e:
-        logger.error(f"Failed to create new article event: {e}")
-        return None
+    return _create_fallback_event(supabase, user_id, article_title, embedding)

@@ -70,13 +70,13 @@ def clean_llm_json(text: str) -> str:
     2. Extracts the first block enclosed in { }.
     """
     text = strip_thinking(text)
-    
+
     # 2. Extract JSON payload
     start = text.find('{')
     end = text.rfind('}')
     if start != -1 and end != -1:
         text = text[start:end+1]
-    
+
     return text.strip()
 
 
