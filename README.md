@@ -1,132 +1,75 @@
 # TechPulse AI 🤖
 
-[![Pulse](https://github.com/vishnun0027/techpulse-ai/actions/workflows/pulse.yml/badge.svg)](https://github.com/vishnun0027/techpulse-ai/actions/workflows/pulse.yml)
-[![Ingress](https://github.com/vishnun0027/techpulse-ai/actions/workflows/ingress.yml/badge.svg)](https://github.com/vishnun0027/techpulse-ai/actions/workflows/ingress.yml)
+[![CI/CD Pipeline](https://github.com/vishnun0027/techpulse-ai/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/vishnun0027/techpulse-ai/actions/workflows/ci-cd.yml)
 
 ### *Your personal tech intelligence system, curated by Agentic AI.*
 
-TechPulse AI goes beyond being an automated news pipeline. It is a **personal tech intelligence system** that remembers context, suppresses repetition, and explains why a development matters to *you* specifically before it ever sends an alert. 
-
-Currently, the project is structured around localized collection, AI summarization, multi-tenant personalization, and scheduled delivery across Slack, Discord, and the web. The overarching objective is to answer a single question: **"Tell me only what changed, why it matters, and what I should watch next."**
+TechPulse AI is an intelligent curation assistant designed to monitor tech feeds, eliminate duplicate coverage, track topic novelty, and deliver tailored, high-value narrative digests straight to your Slack or Discord channels.
 
 ---
 
-##  Highest-Impact Upgrades
+## 🌟 The Core Idea & Vision
+Modern software engineers, developers, and tech leaders are constantly inundated with technical news, security alerts, and framework releases. Keeping up is critical, but the sheer volume of duplicate headlines and low-quality noise makes it incredibly time-consuming.
 
-TechPulse AI V2 introduces next-level features tailored for RAG-based personalized news workflows that emphasize recency, grounding, and user-specific relevance over raw volume:
+**TechPulse AI** is built on a simple vision: to turn passive, noisy news feeds into an active tool for professional growth. The system answers a single, essential question for every article it processes: 
 
-- **Intelligent Deduplication & Novelty Tracking**: By analyzing the actual meaning of articles, TechPulse suppresses "same story, new headline" repeats and surfaces genuinely novel developments.
-- **Memory over Past Coverage**: The system retrieves related history for every incoming article. Summaries are therefore aware of past coverage, tracking *how* a story evolved instead of just treating it as an isolated event.
-- **Personalized Interest Model**: A dynamic scoring engine learns real user priorities by mixing explicit topic filters with implicit quality scores, measuring both engagement and source reliability.
-- **Narrative Digest Composer**: Instead of listing isolated links, the system composes a decision-ready narrative brief grouped logically into key themes (e.g., Generative AI, Security, Industry).
+> *"Tell me only what changed, why it matters, and what I should watch next."*
+
+By analyzing the semantic meaning of stories rather than relying on basic keyword filters, TechPulse AI filters out redundancy, measures the novelty of incoming coverage, and explains the real-world impact of technology developments before delivering a consolidated morning digest.
 
 ---
 
-## 🏗️ Technical Architecture & Pipeline
+## ✨ Key Features
 
-TechPulse AI extends its robust backend backbone to incorporate true agentic capabilities. The flow runs as follows: **Collect → Semantic Dedup → Event Clustering → Retrieve Related History → Summarize ("What happened / Why it matters") → Rank by User Relevance → Compose Digest → Deliver**.
+### 1. Ingestion & Filtering
+Easily subscribe to technical blogs, developer channels, or global news feeds. The system automatically fetches and queues incoming articles, filtering out noise and keeping your queue fresh.
 
-```mermaid
-graph TD
-    Collector["Collector (RSS -> Redis Stream)"] -->|Queue| Enricher
-    Enricher["Enricher (Semantic Dedup & Event Clustering)"] -->|Store| DB[("Database")]
-    Enricher --> Ranker["Ranker (User Relevance Engine)"]
-    Ranker -->|Top Scored| Research["Research Agent"]
-    Research -->|Contextual Analysis| Composer["Composer Agent"]
-    Composer --> Delivery["Delivery Service"]
-    Delivery -->|Webhooks & Web UI| Users["Slack / Discord / React Dashboard"]
+### 2. Intelligent Deduplication & Novelty Tracking
+Suppresses "same story, different headline" repeats by evaluating the underlying meaning of articles. The engine measures how novel an incoming article is compared to what you have already read, showing you only genuinely fresh insights.
+
+### 3. Personalized Relevance Ranking
+Tailor your digest through allowed, blocked, and prioritized interests. The engine scores each article dynamically, ensuring critical topics are boosted to the top of your brief while irrelevant categories are muted.
+
+### 4. Context-Aware "Why It Matters" Takeaways
+Instead of raw links, TechPulse reads the context of current and past related articles to generate a concise summary and a dedicated analysis of the story's real-world impact.
+
+### 5. Theme-Grouped Narrative Briefs
+Articles are organized into clear technical themes (such as *Generative AI*, *Developer Tools*, *Security*, and *Research*), accompanied by a narrative summary explaining the day's main technical updates.
+
+### 6. Seamless Workplace Delivery
+Get your curated intelligence delivered directly to Slack or Discord as clean, formatted briefs designed for rapid reading.
+
+---
+
+## 🔄 How It Works
+
+```
+[ Tech Feeds ] ──> [ Ingestion & Dedup ] ──> [ Personal Interest Ranking ] ──> [ Impact Analysis ] ──> [ Tailored Digest ]
 ```
 
----
-
-## 💻 Web App & User Experience
-
-The backend supports an advanced frontend UI (`techpulse-web`) bridging authentication, settings, and multi-tenant management. Moving forward, the product expands into three core user-facing views:
-
-1. **Morning Brief Page**: A beautifully rendered, theme-grouped narrative digest built dynamically for the user.
-2. **Ask TechPulse**: A semantic search bar over the custom article archive, allowing users to query past intelligence by meaning rather than exact keywords.
-3. **Radar View**: A visual telemetry board showing emerging themes, recurring companies, and "quiet but growing" topics across recent coverage.
+*   **Ingest**: Pulls articles from your configured feeds.
+*   **Filter & Dedup**: Ignores exact duplicates and stories you've already seen.
+*   **Rank**: Applies your custom filters to score and prioritize articles.
+*   **Analyze**: Synthesizes the core news and highlights its specific importance.
+*   **Deliver**: Packages the highest-scoring updates into theme-based Slack or Discord briefs.
 
 ---
 
-## 🛠️ Technology Stack
-
-- **Framework**: Python 3.12+ (Asyncio, Pydantic, Loguru, LangGraph)
-- **Dependency Management**: [uv](https://github.com/astral-sh/uv)
-- **Inference & Embeddings**: Groq (Llama-3.3-70b-versatile, Llama-3.1-8b-instant), Sentence-Transformers (`all-mpnet-base-v2`)
-- **Database**: Supabase (PostgreSQL with pgvector for HNSW indexing)
-- **Stream/De-duplication**: Upstash Redis REST
-- **Deployment**: Local execution or server chron targeting Slack/Discord webhooks
+## 🎯 Who Is It For?
+*   🧑‍💻 **Developers & Architects**: Track new library releases, tooling updates, and framework patterns.
+*   🛡️ **Security Professionals**: Stay on top of CVE vulnerabilities, exploits, and regulatory compliance.
+*   🧠 **AI & ML Engineers**: Monitor new research papers, model releases, and benchmarks.
+*   📈 **Tech Leaders & Managers**: Keep a pulse on industry shifts, funding rounds, and product launches.
 
 ---
 
-## 🚀 Getting Started
+### About
+A CLI-driven, agentic tech intelligence system featuring automated feed collection, semantic deduplication, personalized interest filtering, and Slack/Discord digest delivery.
 
-### 1. Prerequisites
-- Python 3.12+ and `uv` installed.
-- API keys for: Groq, Supabase, and Upstash Redis.
-- Supabase Project with `vector` extension enabled.
+### Topics
+`python` `cli` `typer` `rich` `rss-feed` `redis` `supabase` `groq` `langchain` `langgraph` `rag` `pgvector` `slack-bot` `discord-bot` `uv` `developer-tools` `automated-news`
 
-### 2. Setup
-Clone the repo and install dependencies:
-```bash
-uv sync
-```
-
-### 3. Database Migration
-Apply the V2 schema changes in your Supabase SQL Editor required for Semantic Dedup and RAG tracking found in the `migrations/` directory. Be sure the `articles` table has the `is_delivered` boolean column and the pgvector extension is turned on.
-
-### 4. Environment Config
-Create a `.env` file from the following template:
-```env
-SUPABASE_URL=your_url
-SUPABASE_KEY=your_service_role_key      # Required for techpulse-ops (Operator)
-GROQ_API_KEY=your_key
-UPSTASH_REDIS_REST_URL=your_url
-UPSTASH_REDIS_REST_TOKEN=your_token
-TOP_N_ARTICLES=10
-DEDUP_TTL_DAYS=30
-COLLECTION_INTERVAL_DAYS=14
-```
-
-### 5. Running the AI Pipeline
-
-Everything has been aggregated into a single operational script that handles concurrent execution:
-
-```bash
-uv run techpulse-ops run all
-```
-
----
-
-## 📖 Documentation
-
-For detailed guides on setup, operation, and architecture, please visit our **[Documentation Center](docs/README.md)**.
-
-### 👤 User Documentation
-*   **[User Guide](docs/user_guide.md)**: Managing your feeds and topic filters via the `techpulse` CLI.
-*   **[Config Reference](docs/user_config.md)**: Deep dive into tenant settings and source health.
-
-### 🛠️ Developer & Operator Documentation
-*   **[Architecture Deep Dive](docs/dataflow.md)**: Understanding the 7-stage agentic pipeline and scoring logic.
-*   **[Developer Guide](docs/developer_guide.md)**: Security models, RLS, and development standards.
-*   **[Coding Standards](docs/coding_standards.md)**: PEP8, Ruff, and professional output rules.
-
----
-
-## 🧹 Maintenance & Testing
-
-To verify the entire RAG memory, grouping logic, and pipeline using `pytest`:
-```bash
-PYTHONPATH=src uv run pytest
-```
-
-To wipe the pipeline state cleanly for a fresh run:
-```bash
-uv run techpulse-ops reset --confirm
-```
-
----
-
-## 📜 License
-MIT License. Feel free to use and contribute!
+### Resources
+*   📖 [Documentation Center](docs/README.md)
+*   🐍 [Python 3.12](https://www.python.org/)
+*   ⚡ [uv Package Manager](https://github.com/astral-sh/uv)
