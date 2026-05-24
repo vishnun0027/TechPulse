@@ -25,6 +25,8 @@ if [ "$RUN_CI" = true ]; then
     # Export dummy environment variables for tests
     export DATABASE_URL="sqlite:///./test.db"
     export GROQ_API_KEY="ci-dummy-key"
+    export SUPABASE_URL="https://ci-dummy.supabase.co"
+    export SUPABASE_KEY="ci-dummy-key"
     export TELEGRAM_BOT_TOKEN="0000000000:ci-dummy-token"
     export TELEGRAM_ALLOWED_CHAT_ID="123456789"
     export EMBED_SERVER_URL="http://localhost:8080"
