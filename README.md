@@ -64,10 +64,10 @@ Get your curated intelligence delivered directly to Slack or Discord as clean, f
 ---
 
 ### About
-AI-powered tech news aggregator that summarizes top stories from RSS feeds and delivers daily digests to Slack/Discord.
+A CLI-driven, agentic tech intelligence system featuring automated feed collection, semantic deduplication, personalized interest filtering, and Slack/Discord digest delivery.
 
 ### Topics
-`python` `automation` `ai` `aggregator` `summarizer` `groq` `tech-news`
+`python` `cli` `typer` `rich` `rss-feed` `redis` `supabase` `groq` `langchain` `langgraph` `rag` `pgvector` `slack-bot` `discord-bot` `uv` `developer-tools` `automated-news`
 
 ### Resources
 *   📖 [Documentation Center](docs/README.md)
