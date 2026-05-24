@@ -10,19 +10,49 @@ on:
 
 jobs:
   ci:
-    name: Continuous Integration (Tests & Lint on VM)
+    name: Continuous Integration (Tests & Lint)
     runs-on: ubuntu-latest
 
+    env:
+      # Dummy values so modules can import without crashing.
+      # All real I/O is mocked inside the test suite.
+      DATABASE_URL: "sqlite:///./test.db"
+      GROQ_API_KEY: "ci-dummy-key"
+      TELEGRAM_BOT_TOKEN: "0000000000:ci-dummy-token"
+      TELEGRAM_ALLOWED_CHAT_ID: "123456789"
+      EMBED_SERVER_URL: "http://localhost:8080"
+
     steps:
-      - name: Run CI checks on VM via SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: vishnu
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          script: |
-            /home/vishnu/worklab/techpulse-ai/scripts/cicd.sh --ci-only
+          python-version: "3.12"
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Add uv to PATH
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Install Dependencies
+        run: uv sync
+
+      - name: Lint with Ruff
+        run: uvx ruff check src/ tests/ --ignore E501
+
+      - name: Run Tests
+        run: uv run pytest tests/unit/ -v --tb=short
 
   cd:
     name: Continuous Deployment (Deploy on VM)
