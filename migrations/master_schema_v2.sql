@@ -21,13 +21,31 @@ $$ language 'plpgsql';
 CREATE TABLE IF NOT EXISTS tenant_profiles (
     user_id           UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     full_name         TEXT,
+    email             TEXT,
     slack_webhook_url TEXT,
     discord_webhook_url TEXT,
     api_token         TEXT,
-    is_admin          BOOLEAN DEFAULT FALSE,
+    role              TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'auditor', 'premium', 'user')),
+    is_admin          BOOLEAN DEFAULT FALSE, -- Deprecated, use 'role'
     created_at        TIMESTAMPTZ DEFAULT NOW(),
     updated_at        TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- RBAC Helpers
+CREATE OR REPLACE FUNCTION get_my_role()
+RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT role FROM tenant_profiles WHERE user_id = auth.uid() LIMIT 1;
+$$;
+
+CREATE OR REPLACE FUNCTION can_add_rss_source(p_user_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT CASE
+    WHEN get_my_role() IN ('admin', 'premium') THEN
+      (SELECT COUNT(*) FROM rss_sources WHERE user_id = p_user_id) < 50
+    ELSE
+      (SELECT COUNT(*) FROM rss_sources WHERE user_id = p_user_id) < 5
+  END;
+$$;
 
 -- RSS Sources: User-specific feed configurations & health metrics
 CREATE TABLE IF NOT EXISTS rss_sources (
@@ -282,6 +300,26 @@ BEGIN
 END;
 $$;
 
+-- Atomic increment for article delivery tracking
+CREATE OR REPLACE FUNCTION increment_source_delivery(p_source_id bigint, p_user_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+    INSERT INTO source_health (source_id, user_id, articles_delivered, articles_clicked, quality_score, updated_at)
+    VALUES (p_source_id, p_user_id, 1, 0, 0.5, now())
+    ON CONFLICT (source_id, user_id)
+    DO UPDATE SET
+        articles_delivered = source_health.articles_delivered + 1,
+        quality_score = GREATEST(0.1, LEAST(1.0,
+            CASE
+                WHEN (source_health.articles_delivered + 1) > 0
+                THEN ROUND(source_health.articles_clicked::numeric / (source_health.articles_delivered + 1), 4)
+                ELSE 0.5
+            END
+        )),
+        updated_at = now();
+END;
+$$;
+
 -- Atomic increment for article click tracking (called from the frontend)
 CREATE OR REPLACE FUNCTION increment_source_click(p_source_id bigint, p_user_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
@@ -321,27 +359,57 @@ ALTER TABLE source_health ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_feedback ENABLE ROW LEVEL SECURITY;
 ALTER TABLE telemetry ENABLE ROW LEVEL SECURITY;
 
--- Standard tenant isolation policies (IDEMPOTENT)
+-- Role-aware tenant isolation policies
+
+-- tenant_profiles
 DROP POLICY IF EXISTS "Tenant isolation - Profiles" ON tenant_profiles;
-CREATE POLICY "Tenant isolation - Profiles" ON tenant_profiles FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Profiles - own data or admin/auditor read" ON tenant_profiles FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
+CREATE POLICY "Profiles - own data write" ON tenant_profiles FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Profiles - own data update" ON tenant_profiles FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
+CREATE POLICY "Profiles - admin delete only" ON tenant_profiles FOR DELETE USING (auth.uid() = user_id OR get_my_role() = 'admin');
 
-DROP POLICY IF EXISTS "Tenant isolation - Sources" ON rss_sources;
-CREATE POLICY "Tenant isolation - Sources"  ON rss_sources     FOR ALL USING (auth.uid() = user_id);
-
-DROP POLICY IF EXISTS "Tenant isolation - Articles" ON articles;
-CREATE POLICY "Tenant isolation - Articles" ON articles        FOR ALL USING (auth.uid() = user_id);
-
-DROP POLICY IF EXISTS "Tenant isolation - Events" ON article_events;
-CREATE POLICY "Tenant isolation - Events"   ON article_events   FOR ALL USING (auth.uid() = user_id);
-
+-- app_config
 DROP POLICY IF EXISTS "Tenant isolation - Config" ON app_config;
-CREATE POLICY "Tenant isolation - Config"   ON app_config      FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Config - own data or admin/auditor read" ON app_config FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
+CREATE POLICY "Config - own data write" ON app_config FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Config - own data update" ON app_config FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
 
+-- rss_sources
+DROP POLICY IF EXISTS "Tenant isolation - Sources" ON rss_sources;
+CREATE POLICY "Sources - own data or admin/auditor read" ON rss_sources FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
+CREATE POLICY "Sources - quota-gated insert" ON rss_sources FOR INSERT WITH CHECK (auth.uid() = user_id AND can_add_rss_source(auth.uid()));
+CREATE POLICY "Sources - own data update" ON rss_sources FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
+CREATE POLICY "Sources - own data delete" ON rss_sources FOR DELETE USING (auth.uid() = user_id OR get_my_role() = 'admin');
+
+-- articles
+DROP POLICY IF EXISTS "Tenant isolation - Articles" ON articles;
+CREATE POLICY "Articles - own data or admin/auditor read" ON articles FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
+CREATE POLICY "Articles - own data write" ON articles FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Articles - own data update" ON articles FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
+CREATE POLICY "Articles - own data delete" ON articles FOR DELETE USING (auth.uid() = user_id OR get_my_role() = 'admin');
+
+-- article_events
+DROP POLICY IF EXISTS "Tenant isolation - Events" ON article_events;
+CREATE POLICY "Events - own data or admin/auditor read" ON article_events FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
+CREATE POLICY "Events - own data write" ON article_events FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Events - own data update" ON article_events FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
+CREATE POLICY "Events - own data delete" ON article_events FOR DELETE USING (auth.uid() = user_id OR get_my_role() = 'admin');
+
+-- source_health
 DROP POLICY IF EXISTS "Tenant isolation - Stats" ON source_health;
-CREATE POLICY "Tenant isolation - Stats"    ON source_health   FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "SourceHealth - own data or admin/auditor read" ON source_health FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
+CREATE POLICY "SourceHealth - own data write" ON source_health FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "SourceHealth - own data update" ON source_health FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
 
+-- user_feedback
 DROP POLICY IF EXISTS "Tenant isolation - Feedback" ON user_feedback;
-CREATE POLICY "Tenant isolation - Feedback" ON user_feedback   FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Feedback - own data or admin/auditor read" ON user_feedback FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
+CREATE POLICY "Feedback - own data write" ON user_feedback FOR INSERT WITH CHECK (auth.uid() = user_id AND get_my_role() IN ('admin', 'premium', 'user'));
 
+-- telemetry
 DROP POLICY IF EXISTS "Tenant isolation - Telemetry" ON telemetry;
-CREATE POLICY "Tenant isolation - Telemetry" ON telemetry      FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Telemetry - own data or admin/auditor read" ON telemetry FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
+CREATE POLICY "Telemetry - system write" ON telemetry FOR INSERT WITH CHECK (auth.uid() = user_id OR get_my_role() = 'admin');
+
+-- 9. INDEXES
+CREATE INDEX IF NOT EXISTS idx_tenant_profiles_role ON tenant_profiles(role);

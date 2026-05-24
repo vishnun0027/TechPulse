@@ -209,7 +209,7 @@ def _get_delivery_data(target_user_id: Optional[str] = None, digest: Optional[Di
     return articles_by_user
 
 
-def _deliver_to_user_webhooks(user_id: str, profile: dict, content: Any, digest: Optional[dict]) -> int:
+def _deliver_to_user_webhooks(client: httpx.Client, user_id: str, profile: dict, content: Any, digest: Optional[dict]) -> int:
     """Helper to handle webhook delivery to a single user (Slack + Discord). Returns count delivered."""
     user_name = profile.get("full_name") or "Tech Explorer"
 
@@ -234,7 +234,7 @@ def _deliver_to_user_webhooks(user_id: str, profile: dict, content: Any, digest:
         payload = slack_payload(grouped, intro=intro)
         payload["blocks"][0]["text"]["text"] = f"Hi {user_name}, here is your TechPulse Digest"
         try:
-            httpx.post(slack_url, json=payload, timeout=10).raise_for_status()
+            client.post(slack_url, json=payload, timeout=10).raise_for_status()
             logger.success(f"Slack (User {user_id})")
         except Exception as e:
             logger.error(f"Slack failed for {user_id}: {e}")
@@ -245,7 +245,7 @@ def _deliver_to_user_webhooks(user_id: str, profile: dict, content: Any, digest:
             chunks[0]["content"] = chunks[0]["content"].replace("Smart Digest", f"Digest for {user_name}")
         for i, chunk in enumerate(chunks):
             try:
-                httpx.post(discord_url, json=chunk, timeout=10).raise_for_status()
+                client.post(discord_url, json=chunk, timeout=10).raise_for_status()
                 logger.success(f"Discord chunk {i + 1}/{len(chunks)} (User {user_id})")
             except Exception as e:
                 logger.error(f"Discord chunk {i + 1} failed for {user_id}: {e}")
@@ -273,14 +273,15 @@ def deliver(
     tenant_profiles = {p["user_id"]: p for p in get_tenant_profiles()}
     total_delivered_count = 0
 
-    for user_id, content in articles_by_user.items():
-        profile = tenant_profiles.get(user_id)
-        if not profile:
-            logger.warning(f"User {user_id} has articles but no profile, skipping.")
-            continue
+    with httpx.Client(timeout=15.0) as client:
+        for user_id, content in articles_by_user.items():
+            profile = tenant_profiles.get(user_id)
+            if not profile:
+                logger.warning(f"User {user_id} has articles but no profile, skipping.")
+                continue
 
-        delivered_count = _deliver_to_user_webhooks(user_id, profile, content, digest)
-        total_delivered_count += delivered_count
+            delivered_count = _deliver_to_user_webhooks(client, user_id, profile, content, digest)
+            total_delivered_count += delivered_count
 
     log_telemetry(
         "delivery",

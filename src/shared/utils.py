@@ -1,5 +1,7 @@
+import re
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 TRACKING_PARAMS_BLACKLIST = {
     "utm_source",
@@ -58,6 +60,8 @@ def normalize_url(url: str) -> str:
     )
 
     return normalized
+
+
 def clean_html(html_content: str) -> str:
     """
     Removes HTML tags and boilerplate from content to provide clean text for LLMs.
@@ -67,8 +71,13 @@ def clean_html(html_content: str) -> str:
     try:
         from bs4 import BeautifulSoup
 
-        # Use lxml if available, otherwise fallback to html.parser
-        soup = BeautifulSoup(html_content, "html.parser")
+        import importlib.util
+        if importlib.util.find_spec("lxml") is not None:
+            parser = "lxml"
+        else:
+            parser = "html.parser"
+
+        soup = BeautifulSoup(html_content, parser)
 
         # Remove script and style elements
         for script in soup(["script", "style"]):
@@ -77,16 +86,9 @@ def clean_html(html_content: str) -> str:
         # Get text
         text = soup.get_text(separator=" ")
 
-        # Break into lines and remove leading/trailing whitespace
-        lines = (line.strip() for line in text.splitlines())
-        # Break multi-headlines into a line each
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        # Drop blank lines
-        text = " ".join(chunk for chunk in chunks if chunk)
-
-        return text
+        # Efficiently clean up whitespace and join chunks
+        chunks = (phrase.strip() for line in text.splitlines() for phrase in line.split("  ") if phrase.strip())
+        return " ".join(chunks)
     except Exception:
-        # Fallback to simple regex if BS4 fails
-        import re
-
-        return re.sub(r"<[^>]+>", "", html_content)
+        # Fallback to pre-compiled regex if BS4 fails
+        return _HTML_TAG_RE.sub("", html_content)

@@ -63,7 +63,3 @@ cicd:
 ## Maintenance
 reset:
 	PYTHONPATH=$(PYTHONPATH) uv run python -m shared.maintenance reset --confirm
-
-## Populate default configuration from migration script
-migrate-config:
-	PYTHONPATH=$(PYTHONPATH) uv run python scratch/migrate_config.py
