@@ -64,12 +64,18 @@ Get your curated intelligence delivered directly to Slack or Discord as clean, f
 ---
 
 ### About
-A CLI-driven, agentic tech intelligence system featuring automated feed collection, semantic deduplication, personalized interest filtering, and Slack/Discord digest delivery.
+AI-powered tech news aggregator that summarizes top stories from RSS feeds and delivers daily digests to Slack/Discord.
 
 ### Topics
-`python` `cli` `typer` `rich` `rss-feed` `redis` `supabase` `groq` `langchain` `langgraph` `rag` `pgvector` `slack-bot` `discord-bot` `uv` `developer-tools` `automated-news`
+`python` `automation` `ai` `aggregator` `summarizer` `groq` `tech-news`
 
 ### Resources
 *   📖 [Documentation Center](docs/README.md)
 *   🐍 [Python 3.12](https://www.python.org/)
 *   ⚡ [uv Package Manager](https://github.com/astral-sh/uv)
+
+### Languages
+*   🐍 **Python**: 85.8%
+*   🗄️ **PLpgSQL**: 11.4%
+*   🐚 **Shell**: 1.8%
+*   🛠️ **Makefile**: 1.0%
