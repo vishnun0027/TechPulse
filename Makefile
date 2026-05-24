@@ -56,6 +56,10 @@ monitor:
 test:
 	PYTHONPATH=$(PYTHONPATH) uv run pytest
 
+## CI/CD Pipeline
+cicd:
+	@./scripts/cicd.sh
+
 ## Maintenance
 reset:
 	PYTHONPATH=$(PYTHONPATH) uv run python -m shared.maintenance reset --confirm

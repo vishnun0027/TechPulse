@@ -59,7 +59,7 @@ def main(
 def init(non_interactive: bool = typer.Option(False, "--non-interactive", help="Skip welcome screens")) -> None:
     """Initialize your Pulse AI environment and link your account."""
     console.rule("[bold cyan]Welcome to Pulse AI[/bold cyan]")
-    
+
     if not non_interactive:
         rprint("\n[dim]Pulse is your personal tech intelligence pipeline.\n"
                "This command will set up your local environment and link your account.[/dim]\n")
@@ -74,15 +74,15 @@ def init(non_interactive: bool = typer.Option(False, "--non-interactive", help="
             rprint("[yellow]Existing configuration is corrupt. Re-initializing...[/yellow]")
 
     login()
-    
+
     client, session = get_user_client()
     with console.status("Bootstrapping personal intelligence..."):
         existing = client.table("app_config").select("key").eq("key", "topics").execute()
         if not existing.data:
             default_topics = {"allowed": ["ai", "python", "rust"], "blocked": ["crypto"], "priority": []}
             client.table("app_config").insert({
-                "key": "topics", 
-                "value": default_topics, 
+                "key": "topics",
+                "value": default_topics,
                 "user_id": session["user_id"]
             }).execute()
             rprint("[dim]Initialized default topic filters (AI, Python, Rust).[/dim]")
@@ -114,7 +114,7 @@ def login() -> None:
         try:
             client = create_client(url, anon_key)
             res = client.auth.sign_in_with_password({"email": email, "password": password})
-            
+
             if not res.session:
                 rprint("[red]Login failed: No session returned.[/red]")
                 return
@@ -193,10 +193,10 @@ def pulse_digest(
         return
 
     console.rule(f"[bold cyan]Intelligence Digest: {session['email']}")
-    
+
     for i, art in enumerate(articles, 1):
         rprint(f"\n[bold cyan][{i}] {art['title']}[/bold cyan] [dim](Score: {art['score']:.1f} | {art['source']})[/dim]")
-        
+
         md_content = f"**Summary**: {art['summary']}\n\n**Why it Matters**: {art['why_it_matters']}"
         console.print(Markdown(md_content))
         console.print("[dim]────────────────────────────────────────────────────────────────[/dim]")

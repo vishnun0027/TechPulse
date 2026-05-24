@@ -61,7 +61,7 @@ async def _rank_article(
     blocked_topics = config.get("blocked", [])
     priority_topics = {t.lower() for t in config.get("priority", [])}
     ai_topics = []
-    
+
     final_score = h_score
     if 3.0 <= h_score <= 6.5:
         rprint(f"[cyan]Refining borderline article ({h_score}): {title[:40]}...[/cyan]")
@@ -136,7 +136,7 @@ async def process_article_v2(
             quality = get_source_quality(art.get("source_id"), user_id)
             keyword_matches = [t for t in config.get("allowed", []) if t.lower() in (title + " " + content).lower()]
             has_priority = any(t.lower() in {pt.lower() for pt in config.get("priority", [])} for t in keyword_matches)
-            
+
             h_score = scorer.compute_final_score(scorer.RankSignals(
                 base_relevance=4.0, novelty_score=novelty_score, source_quality=quality,
                 topic_match=0.6 if keyword_matches else 0.4, priority_boost=1.0 if has_priority else 0.0, is_blocked=False,
@@ -173,7 +173,7 @@ async def _run_enrichment_stage(db: Any, GROQ_API_KEY: str, limit: int) -> None:
 
     tasks = [process_article_v2(db, msg, agent, GROQ_API_KEY, semaphore) for msg in messages]
     results = await asyncio.gather(*tasks)
-    
+
     success_count = sum(1 for r in results if r)
     rprint(f"[bold green]Enrichment batch complete: {success_count}/{len(messages)} articles processed.[/bold green]")
 

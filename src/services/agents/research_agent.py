@@ -6,6 +6,10 @@ from loguru import logger
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from shared.models import ArticleAnalysis
+from tenacity import retry, stop_after_attempt, wait_exponential
+from shared.ai_utils import retry_llm_call, clean_llm_json
+from langchain_core.runnables import RunnableLambda
+from shared.config import settings
 
 
 class ResearchState(TypedDict):
@@ -20,8 +24,6 @@ class ResearchState(TypedDict):
     topics: List[str]
     research_failed: bool
 
-
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 def retrieve_history(state: ResearchState, supabase: Client) -> ResearchState:
     """Node 1: Pull top-3 related articles from Supabase pgvector."""
@@ -46,10 +48,6 @@ def retrieve_history(state: ResearchState, supabase: Client) -> ResearchState:
         logger.error(f"Retrieve history failed: {e}")
         state["similar_history"] = []
     return state
-
-
-from shared.ai_utils import retry_llm_call, clean_llm_json
-from langchain_core.runnables import RunnableLambda
 
 
 def _format_history_context(similar_history: List[Dict]) -> str:
@@ -107,7 +105,6 @@ def _execute_summary_chain(
 def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
     """Node 2: RAG-enhanced summarization with historical context."""
     # Use high-capacity model for research (default: Qwen 32B for rate-limit efficiency)
-    from shared.config import settings
     llm = ChatGroq(
         model=settings.groq_research_model, api_key=groq_api_key, temperature=0.1
     )

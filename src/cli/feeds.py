@@ -132,7 +132,7 @@ def _parse_import_lines(lines: List[str], existing: Set[str], uid: str) -> tuple
 
         existing.add(url.lower())
         rows.append({"name": name, "url": url, "user_id": uid})
-    
+
     return rows, skipped, invalid
 
 @feeds_app.command("import")
@@ -153,7 +153,7 @@ def sources_import(file: Path = typer.Argument(..., help="Path to a text file"))
         for line in file.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
-    
+
     rows, skipped, invalid = _parse_import_lines(lines, existing, uid)
 
     if not rows:

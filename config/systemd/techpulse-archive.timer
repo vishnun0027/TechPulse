@@ -1,0 +1,9 @@
+[Unit]
+Description=Run TechPulse AI Weekly Hugging Face Export weekly on Sunday
+
+[Timer]
+OnCalendar=Sun *-*-* 00:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

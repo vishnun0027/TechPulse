@@ -1,0 +1,9 @@
+[Unit]
+Description=TechPulse AI Weekly Hugging Face Export
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/vishnu/worklab/techpulse-ai
+EnvironmentFile=/home/vishnu/worklab/techpulse-ai/.env
+ExecStart=/home/vishnu/.local/bin/uv run techpulse-ops run hf-export --repo-id vishnun0027/techpulse-intelligence --private

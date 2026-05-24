@@ -18,7 +18,7 @@ from services.delivery.main import deliver
 from services.ranker.feedback_processor import process_feedback_batch
 from services.ranker.hf_exporter import export_to_hf
 from shared.db import get_tenant_profiles
-from cli.pipeline import process_article_v2, run_all_async
+from cli.pipeline import run_all_async
 
 app = typer.Typer(
     name="techpulse-ops",

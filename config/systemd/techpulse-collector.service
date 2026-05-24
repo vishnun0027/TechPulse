@@ -1,0 +1,9 @@
+[Unit]
+Description=TechPulse AI Fast Collector Sweep
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/vishnu/worklab/techpulse-ai
+EnvironmentFile=/home/vishnu/worklab/techpulse-ai/.env
+ExecStart=/home/vishnu/.local/bin/uv run techpulse-ops run collect
