@@ -74,7 +74,10 @@ jobs:
             mkdir -p /home/vishnu/worklab/techpulse-ai
             cd /home/vishnu/worklab/techpulse-ai
             if [ ! -d .git ]; then
-              git clone https://github.com/vishnun0027/techpulse-ai.git .
+              git init
+              git remote add origin https://github.com/vishnun0027/techpulse-ai.git
+              git fetch origin main
+              git checkout -f main
             else
               git reset --hard HEAD
               git pull origin main
