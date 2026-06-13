@@ -204,7 +204,7 @@ async def run_all_async(db: Any, limit: int = 50) -> None:
     """Internal async orchestrator for the full V2 pipeline."""
     from rich.console import Console
     console = Console()
-    console.rule("[bold cyan]TechPulse AI V2 Pipeline Orchestration")
+    console.rule("[bold cyan]TechPulse V2 Pipeline Orchestration")
     GROQ_API_KEY = settings.groq_api_key
     loop = asyncio.get_running_loop()
 

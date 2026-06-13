@@ -1,5 +1,5 @@
 """
-pulse - Unified TechPulse AI CLI
+pulse - Unified TechPulse CLI
 Authenticates via Supabase email/password. JWT stored in ~/.techpulse/config.json.
 User-facing queries respect Row Level Security. Pipeline operations use service key.
 """
@@ -24,12 +24,12 @@ console = Console(theme=PULSE_THEME)
 
 def version_callback(value: bool):
     if value:
-        rprint(f"Pulse CLI [bold cyan]v{get_version('techpulse-ai')}[/bold cyan]")
+        rprint(f"Pulse CLI [bold cyan]v{get_version('techpulse')}[/bold cyan]")
         raise typer.Exit()
 
 app = typer.Typer(
     name="pulse",
-    help=" [bold cyan]TechPulse AI[/bold cyan] — Your personal tech intelligence pipeline",
+    help=" [bold cyan]TechPulse[/bold cyan] — Your personal tech intelligence pipeline",
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
@@ -329,7 +329,7 @@ def run_api_server(
 ) -> None:
     """Launch the FastAPI REST server for tech intelligence and management."""
     import uvicorn
-    console.rule("[bold cyan]TechPulse AI API Server")
+    console.rule("[bold cyan]TechPulse API Server")
     rprint(f"[dim]Starting server on {host}:{port} (reload={reload})[/dim]")
     uvicorn.run("api.main:app", host=host, port=port, reload=reload, factory=False)
 

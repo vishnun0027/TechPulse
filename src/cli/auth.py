@@ -11,7 +11,7 @@ import typer
 import keyring
 from rich import print as rprint
 
-SERVICE_NAME = "techpulse-ai"
+SERVICE_NAME = "techpulse"
 CONFIG_PATH = Path.home() / ".techpulse" / "config.json"
 
 def _load_session() -> Dict[str, Any]:

@@ -1,4 +1,4 @@
-# TechPulse AI — User Configuration Reference
+# TechPulse — User Configuration Reference
 
 > What a user must configure for the pipeline to work correctly.
 
@@ -6,7 +6,7 @@
 
 ## Overview
 
-TechPulse AI is multi-tenant. Every user has their own isolated configuration stored in Supabase. The pipeline reads these at runtime — nothing is hardcoded per user. If any of these are missing, the pipeline still runs but with degraded or neutral behaviour (documented below).
+TechPulse is multi-tenant. Every user has their own isolated configuration stored in Supabase. The pipeline reads these at runtime — nothing is hardcoded per user. If any of these are missing, the pipeline still runs but with degraded or neutral behaviour (documented below).
 
 ---
 

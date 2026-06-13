@@ -82,7 +82,7 @@ async def reset():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="TechPulse AI Maintenance Control")
+    parser = argparse.ArgumentParser(description="TechPulse Maintenance Control")
     parser.add_argument("action", choices=["reset", "purge"], help="Action to perform")
     parser.add_argument(
         "--confirm", action="store_true", help="Confirm destructive action"

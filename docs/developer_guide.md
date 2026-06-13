@@ -1,10 +1,10 @@
-# TechPulse AI: Developer Documentation 🛠️
+# TechPulse: Developer Documentation 🛠️
 
-This document provides a technical deep-dive into the TechPulse AI architecture, data pipeline, and security model.
+This document provides a technical deep-dive into the TechPulse architecture, data pipeline, and security model.
 
 ## 🏗️ Architecture & Data Flow
 
-TechPulse AI V2 transitions from a simple RSS aggregator to an **Agentic Tech Intelligence System**. It uses a pipeline structure defined by five major stages.
+TechPulse V2 transitions from a simple RSS aggregator to an **Agentic Tech Intelligence System**. It uses a pipeline structure defined by five major stages.
 
 ```mermaid
 graph TD

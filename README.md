@@ -1,18 +1,18 @@
-# TechPulse AI 🤖
+# TechPulse 🤖
 
-[![CI/CD Pipeline](https://github.com/vishnun0027/techpulse-ai/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/vishnun0027/techpulse-ai/actions/workflows/ci-cd.yml)
+[![CI/CD Pipeline](https://github.com/vishnun0027/TechPulse/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/vishnun0027/TechPulse/actions/workflows/ci-cd.yml)
 
 ### *Your personal tech intelligence system, curated by Agentic AI.*
 
 Keeping up with the constant stream of technical news, security alerts, and framework releases can feel like a full-time job. We end up reading the same stories across different sites, sorting through clickbait, and trying to filter out what actually matters to our work.
 
-**TechPulse AI** is a smart, AI-powered tech news assistant designed to clean up your daily reading. It monitors your favorite RSS and Atom feeds, eliminates duplicate coverage, tracks topic novelty, and delivers tailored, high-value digests straight to your Slack or Discord channels.
+**TechPulse** is a smart, AI-powered tech news assistant designed to clean up your daily reading. It monitors your favorite RSS and Atom feeds, eliminates duplicate coverage, tracks topic novelty, and delivers tailored, high-value digests straight to your Slack or Discord channels.
 
 ---
 
 ## 🌟 The Vision
 
-TechPulse AI was built to turn noisy, passive news feeds into an active tool for professional growth. Instead of just sending you a list of headlines, it answers the questions you actually care about:
+TechPulse was built to turn noisy, passive news feeds into an active tool for professional growth. Instead of just sending you a list of headlines, it answers the questions you actually care about:
 
 > *"What changed, why does it matter, and what should I watch next?"*
 
@@ -59,5 +59,5 @@ By analyzing the semantic meaning of articles rather than just relying on simple
 
 ## 📖 Getting Started
 
-To learn how to install, configure, and run TechPulse AI, head over to our [Documentation Center](docs/README.md).
+To learn how to install, configure, and run TechPulse, head over to our [Documentation Center](docs/README.md).
 

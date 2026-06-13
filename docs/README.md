@@ -1,6 +1,6 @@
-# TechPulse AI Documentation 📚
+# TechPulse Documentation 📚
 
-Welcome to the technical documentation for TechPulse AI. Choose a guide below to get started:
+Welcome to the technical documentation for TechPulse. Choose a guide below to get started:
 
 ### 👤 For Users
 *   **[User Guide](user_guide.md)**: How to use the `pulse` CLI to manage your news feeds and topics.

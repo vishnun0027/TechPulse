@@ -129,7 +129,7 @@ def generate_layout(stats):
         Layout(name="footer", size=3),
     )
 
-    layout["header"].update(Panel("TechPulse AI — System Monitor", style="bold cyan"))
+    layout["header"].update(Panel("TechPulse — System Monitor", style="bold cyan"))
     layout["main"].split_row(Layout(name="stats"), Layout(name="logs"))
 
     stats_table = _create_stats_table(lag, stuck, total, delivered, ready)

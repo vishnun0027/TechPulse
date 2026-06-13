@@ -1,5 +1,5 @@
 [Unit]
-Description=Run TechPulse AI Weekly Hugging Face Export weekly on Sunday
+Description=Run TechPulse Weekly Hugging Face Export weekly on Sunday
 
 [Timer]
 OnCalendar=Sun *-*-* 00:00:00

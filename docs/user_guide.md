@@ -1,4 +1,4 @@
-# TechPulse AI User Guide
+# TechPulse User Guide
 
 Welcome to your personalized tech intelligence assistant. This guide explains how to manage your news feeds, configure your topic filters, read digests, and query your catalog using the unified `pulse` CLI and REST API.
 

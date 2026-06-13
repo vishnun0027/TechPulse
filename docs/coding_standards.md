@@ -1,9 +1,9 @@
-# TechPulse AI Coding Standards
+# TechPulse Coding Standards
 
 **Author:** Vishnu
 **Last Updated:** 2026-04-28 14:41 UTC
 
-This document outlines the strict coding standards and conventions enforced across the TechPulse AI V2 codebase.
+This document outlines the strict coding standards and conventions enforced across the TechPulse V2 codebase.
 
 ## 1. Code Formatting & Linting
 We use **Ruff** as our primary linter and formatter to enforce standard Python PEP8 styles and maximize execution speed.

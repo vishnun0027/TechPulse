@@ -1,4 +1,4 @@
-# TechPulse AI — Complete Dataflow & Logic Reference
+# TechPulse — Complete Dataflow & Logic Reference
 
 > Every detail in this document is traced directly to source code in `src/`.
 
@@ -27,7 +27,7 @@
 
 ## 1. System Overview
 
-TechPulse AI answers one question per article:
+TechPulse answers one question per article:
 
 > *"Tell me only what changed, why it matters, and what I should watch next."*
 

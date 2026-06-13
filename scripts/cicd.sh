@@ -2,7 +2,7 @@
 set -e
 
 # Define variables
-PROJECT_DIR="/home/vishnu/worklab/techpulse-ai"
+PROJECT_DIR="/home/vishnu/worklab/techpulse"
 cd "$PROJECT_DIR"
 export PATH="$HOME/.local/bin:$PATH"
 

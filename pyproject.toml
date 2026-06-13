@@ -10,7 +10,7 @@ package = true
 
 
 [project]
-name = "techpulse-ai"
+name = "techpulse"
 version = "0.1.0"
 description = "Agentic tech intelligence system: collects, enriches, ranks, and delivers personalized AI-curated news digests."
 readme = "README.md"

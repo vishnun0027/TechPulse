@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routes import articles, sources, config, pipeline, search
 
 app = FastAPI(
-    title="TechPulse AI API",
-    description="REST API for TechPulse AI curated intelligence and management.",
+    title="TechPulse API",
+    description="REST API for TechPulse curated intelligence and management.",
     version="0.1.0",
 )
 
@@ -20,7 +20,7 @@ app.add_middleware(
 @app.get("/health")
 def health_check():
     """System health check endpoint."""
-    return {"status": "healthy", "service": "techpulse-ai-api"}
+    return {"status": "healthy", "service": "techpulse-api"}
 
 # Include routers
 app.include_router(articles.router, prefix="/articles", tags=["Articles"])

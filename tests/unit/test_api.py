@@ -8,7 +8,7 @@ TEST_USER_ID = "ab05c507-fd62-44c4-80de-c1b2ae4f0bf2"
 def test_health():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "healthy", "service": "techpulse-ai-api"}
+    assert response.json() == {"status": "healthy", "service": "techpulse-api"}
 
 @patch("api.routes.articles.supabase")
 def test_get_articles(mock_supabase):

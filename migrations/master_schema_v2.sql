@@ -1,4 +1,4 @@
--- TechPulse AI - Master Schema (V2 Final Consolidation)
+-- TechPulse - Master Schema (V2 Final Consolidation)
 -- This script contains the complete, unified database state including V2 vector logic.
 -- Targeted for initialization of fresh project environments.
 

@@ -2507,7 +2507,7 @@ wheels = [
 ]
 
 [[package]]
-name = "techpulse-ai"
+name = "techpulse"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
