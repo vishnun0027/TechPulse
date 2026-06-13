@@ -22,7 +22,7 @@ def _load_session() -> Dict[str, Any]:
     try:
         with open(CONFIG_PATH) as f:
             session = json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
+    except (json.JSONDecodeError, IOError):
         rprint(f"[red]Corrupt config file at {CONFIG_PATH}.[/red] Run: [bold cyan]pulse login[/bold cyan]")
         raise typer.Exit(1)
 
@@ -111,8 +111,8 @@ def get_user_client() -> Tuple[Any, Dict[str, Any]]:
                 "email": session["email"],
                 "anon_key": anon_key,
             })
-    except Exception as e:
-        rprint(f"[bold red]Session expired or invalid.[/bold red] Run: [bold cyan]pulse login[/bold cyan]")
+    except Exception:
+        rprint("[bold red]Session expired or invalid.[/bold red] Run: [bold cyan]pulse login[/bold cyan]")
         _clear_session()
         raise typer.Exit(1)
 

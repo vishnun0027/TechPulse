@@ -50,7 +50,7 @@ def toggle_source(
     res = supabase.table("rss_sources").select("is_active").eq("id", source_id).eq("user_id", user_id).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Source not found.")
-    
+
     new_status = not res.data[0]["is_active"]
     supabase.table("rss_sources").update({"is_active": new_status}).eq("id", source_id).eq("user_id", user_id).execute()
     return {"status": "success", "is_active": new_status}

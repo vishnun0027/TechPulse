@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from loguru import logger
+from api.routes import articles, sources, config, pipeline, search
 
 app = FastAPI(
     title="TechPulse AI API",
@@ -16,8 +16,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-from api.routes import articles, sources, config, pipeline, search
 
 @app.get("/health")
 def health_check():

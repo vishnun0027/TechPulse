@@ -145,7 +145,7 @@ async def process_article_v2(
 
             h_score = scorer.compute_final_score(scorer.RankSignals(
                 base_relevance=4.0, novelty_score=novelty_score, source_quality=quality,
-                topic_match=0.6 if keyword_matches else 0.4, priority_boost=1.0 if has_priority else 0.0, 
+                topic_match=0.6 if keyword_matches else 0.4, priority_boost=1.0 if has_priority else 0.0,
                 is_blocked=is_blocked,
             ))
 

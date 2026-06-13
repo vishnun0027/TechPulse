@@ -16,7 +16,7 @@ from loguru import logger
 from importlib.metadata import version as get_version
 
 from cli.theme import PULSE_THEME
-from cli.auth import get_user_client, _load_session, _save_session, _clear_session, CONFIG_PATH
+from cli.auth import get_user_client, _save_session, _clear_session
 from cli.feeds import feeds_app, sources_list
 from cli.filters import filter_app, topics_show
 

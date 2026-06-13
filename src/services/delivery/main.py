@@ -113,7 +113,7 @@ def slack_payload(
 
     # Build article blocks but respect Slack's 50-block limit
     article_blocks = _build_slack_article_blocks(grouped_articles)
-    
+
     # We need to leave room for the footer (1 block) and header/divider (3 blocks)
     # Total limit: 50. Headers/Intro/Divider = 3-4 blocks. Footer = 1 block.
     # Safe limit for article blocks = 45.

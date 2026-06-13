@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from pydantic import BaseModel
 from api.deps import get_current_user_id
 from shared.db import supabase
@@ -32,13 +32,13 @@ def perform_rag_search(
     user_id: str = Depends(get_current_user_id)
 ):
     """
-    Performs a vector search and cited LLM synthesis (RAG) 
+    Performs a vector search and cited LLM synthesis (RAG)
     over the user's personal articles catalog.
     """
     groq_api_key = settings.groq_api_key
     if not groq_api_key:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail="GROQ_API_KEY is not configured on the server."
         )
 
@@ -59,7 +59,7 @@ def perform_rag_search(
     try:
         # Execute workflow synchronously
         result = agent.invoke(initial_state)
-        
+
         # Check for node level errors
         if result.get("error"):
             raise HTTPException(status_code=500, detail=result["error"])
@@ -73,6 +73,6 @@ def perform_rag_search(
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"RAG search execution failed: {str(e)}"
         )

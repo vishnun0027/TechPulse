@@ -38,10 +38,10 @@ def get_articles(
         .order("score", desc=True)
         .range(offset, offset + limit - 1)
     )
-    
+
     if is_delivered is not None:
         query = query.eq("is_delivered", is_delivered)
-        
+
     res = query.execute()
     return res.data or []
 

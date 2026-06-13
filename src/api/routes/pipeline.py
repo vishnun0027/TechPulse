@@ -16,10 +16,10 @@ async def trigger_pipeline(
     Manually triggers the full pipeline (collect → enrich → deliver) in the background.
     """
     logger.info(f"API: Manual pipeline run triggered by user {user_id}")
-    
+
     # We run it in the background to avoid timing out the HTTP request
     background_tasks.add_task(run_all_async, supabase, limit=limit)
-    
+
     return {
         "status": "accepted",
         "message": "Pipeline run started in the background.",

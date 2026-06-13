@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List, Dict
+from typing import List
 from shared.db import supabase
 from api.deps import get_current_user_id
 from pydantic import BaseModel
@@ -45,11 +45,11 @@ def get_user_stats(user_id: str = Depends(get_current_user_id)):
     # Count total articles
     articles_res = supabase.table("articles").select("id", count="exact").eq("user_id", user_id).execute()
     total_articles = articles_res.count or 0
-    
+
     # Count active sources
     sources_res = supabase.table("rss_sources").select("id", count="exact").eq("user_id", user_id).eq("is_active", True).execute()
     active_sources = sources_res.count or 0
-    
+
     # Get last delivery time
     last_delivery = (
         supabase.table("articles")
@@ -61,7 +61,7 @@ def get_user_stats(user_id: str = Depends(get_current_user_id)):
         .execute()
     )
     last_time = last_delivery.data[0]["created_at"] if last_delivery.data else None
-    
+
     return {
         "total_articles": total_articles,
         "active_sources": active_sources,
