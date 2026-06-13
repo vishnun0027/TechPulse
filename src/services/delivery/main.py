@@ -111,7 +111,20 @@ def slack_payload(
     blocks.append({"type": "divider"})
     total_count = sum(len(v) for v in grouped_articles.values())
 
-    blocks.extend(_build_slack_article_blocks(grouped_articles))
+    # Build article blocks but respect Slack's 50-block limit
+    article_blocks = _build_slack_article_blocks(grouped_articles)
+    
+    # We need to leave room for the footer (1 block) and header/divider (3 blocks)
+    # Total limit: 50. Headers/Intro/Divider = 3-4 blocks. Footer = 1 block.
+    # Safe limit for article blocks = 45.
+    if len(blocks) + len(article_blocks) > 49:
+        logger.warning(f"Slack payload exceeds block limit ({len(blocks) + len(article_blocks)}). Truncating.")
+        article_blocks = article_blocks[:49 - len(blocks)]
+        # Remove trailing divider if any
+        if article_blocks and article_blocks[-1]["type"] == "divider":
+            article_blocks.pop()
+
+    blocks.extend(article_blocks)
 
     # Add System Health context footer
     lag = _get_summarizer_lag()

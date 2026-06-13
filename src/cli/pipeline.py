@@ -36,14 +36,16 @@ def _triage_article(title: str, content: str, config: Dict[str, Any], user_id: s
         rprint(f"[yellow]SKIP: Content too short ({len(content)} chars): {title[:40]}...[/yellow]")
         return False
 
-    allowed_topics = config.get("allowed", [])
+    # Check blocked topics (Negative Filter)
+    blocked_topics = config.get("blocked", [])
     text_lower = (title + " " + content).lower()
-    keyword_matches = [t for t in allowed_topics if t.lower() in text_lower]
-
-    if allowed_topics and not keyword_matches:
-        rprint(f"[dim]SKIP: Noise (No keywords): {title[:40]}...[/dim]")
-        log_rejection(user_id, title, source, url, 0.0, "Noise (No keywords)")
+    if any(b.lower() in text_lower for b in blocked_topics if b):
+        rprint(f"[dim]SKIP: Blocked Topic: {title[:40]}...[/dim]")
+        log_rejection(user_id, title, source, url, 0.0, "Blocked Topic")
         return False
+
+    # V2 Philosophy: Don't strictly block if allowed keywords are missing.
+    # We let it through for semantic evaluation unless it's obviously junk.
     return True
 
 
@@ -63,8 +65,9 @@ async def _rank_article(
     ai_topics = []
 
     final_score = h_score
-    if 3.0 <= h_score <= 6.5:
-        rprint(f"[cyan]Refining borderline article ({h_score}): {title[:40]}...[/cyan]")
+    # Only refine if it's within the borderline range.
+    if 3.0 <= h_score <= 7.5:
+        rprint(f"[cyan]Refining article with AI ({h_score}): {title[:40]}...[/cyan]")
         analysis = await summarizer_main.call_groq_async(title, content, source, allowed_topics)
         ai_topics = analysis.topics
         final_score = scorer.compute_final_score(scorer.RankSignals(
@@ -134,12 +137,16 @@ async def process_article_v2(
             event_id = clusterer.find_or_create_event(db, summarizer_main.get_llm(), embedding, title, user_id)
 
             quality = get_source_quality(art.get("source_id"), user_id)
-            keyword_matches = [t for t in config.get("allowed", []) if t.lower() in (title + " " + content).lower()]
+            text_lower = (title + " " + content).lower()
+            keyword_matches = [t for t in config.get("allowed", []) if t.lower() in text_lower]
+            blocked_topics = config.get("blocked", [])
             has_priority = any(t.lower() in {pt.lower() for pt in config.get("priority", [])} for t in keyword_matches)
+            is_blocked = any(b.lower() in text_lower for b in blocked_topics if b)
 
             h_score = scorer.compute_final_score(scorer.RankSignals(
                 base_relevance=4.0, novelty_score=novelty_score, source_quality=quality,
-                topic_match=0.6 if keyword_matches else 0.4, priority_boost=1.0 if has_priority else 0.0, is_blocked=False,
+                topic_match=0.6 if keyword_matches else 0.4, priority_boost=1.0 if has_priority else 0.0, 
+                is_blocked=is_blocked,
             ))
 
             final_score, ai_topics = await _rank_article(db, h_score, novelty_score, quality, title, content, source, config)
@@ -179,8 +186,9 @@ async def _run_enrichment_stage(db: Any, GROQ_API_KEY: str, limit: int) -> None:
 
 
 async def _run_delivery_stage(db: Any) -> None:
-    from cli.ops import get_active_users
-    delivery_targets = get_active_users(include_admins=False)
+    from shared.db import get_tenant_profiles
+    profiles = get_tenant_profiles()
+    delivery_targets = [p["user_id"] for p in profiles]
     loop = asyncio.get_running_loop()
 
     for user_id in delivery_targets:

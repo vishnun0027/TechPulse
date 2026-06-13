@@ -74,7 +74,7 @@ RSS Feeds
 | Vector Index | pgvector HNSW on Supabase | Semantic dedup, novelty, RAG retrieval |
 | Pipeline Queue | Upstash Redis REST | `stream:raw` Redis Stream — decouples Collector from Enricher |
 | URL/Title Dedup Cache | Upstash Redis REST | `seen:{user_id}:{md5}` and `title:{user_id}:{slug}` keys with TTL |
-| AI Inference | Groq API | `llama-3.1-8b-instant` (summarizer), `llama-3.3-70b-versatile` (research agent) |
+| AI Inference | Groq API | `llama-3.1-8b-instant` (summarizer), `qwen/qwen3-32b` (research agent) |
 | Embeddings | Sentence-Transformers (local) | `all-mpnet-base-v2` → 768-dim vectors |
 
 ### Supabase Tables
@@ -102,21 +102,13 @@ RSS Feeds
 
 ---
 
-## 3. Multi-Tenancy & RBAC
+## 3. Multi-Tenancy & Data Isolation
 
-### 4-Role System
+### Single-Tier Ingestion and Delivery
 
-| Role | Pipeline behavior |
-|---|---|
-| `admin` | Excluded from automated delivery. Cross-tenant visibility in CLI/dashboard. |
-| `auditor` | Observer only — not delivered to. |
-| `premium` | Full delivery + advanced AI features (custom scorer weights). |
-| `user` | Standard delivery. |
-
-**Enforcement in `ops.py`:**
-- `get_active_users(include_admins=False)` filters `is_admin=False` from `tenant_profiles`
-- `get_premium_tenants()` returns only `admin` + `premium` rows
-- `get_tenant_role(user_id)` returns role string; defaults to `"user"` on any error
+While the database schema retains role distinctions (`admin`, `auditor`, `premium`, `user`) for potential future extension, the V2 backend executes a single-tier personal pipeline:
+- **Inclusion**: All active users from `tenant_profiles` are included in automated collection, enrichment, and delivery loops.
+- **Webhook Delivery**: Every user with a configured Slack or Discord webhook receives digests automatically, regardless of role.
 
 **Per-tenant isolation:** Every DB record, every vector RPC call, and every Redis key is namespaced by `user_id`. Two users receiving the same URL get independent processing, independent topic filters, and independent source quality scores.
 
@@ -213,7 +205,7 @@ log_telemetry("collector", {
 
 **Files:** `src/services/enricher/embedder.py`, `deduplicator.py`, `novelty.py`, `clusterer.py`
 
-Called inside `process_article_v2()` in `ops.py` for each message read from the Redis stream.
+Called inside `process_article_v2()` in `cli/pipeline.py` for each message read from the Redis stream.
 
 ### 5.1 Embedding
 
@@ -437,7 +429,7 @@ HUMAN: {article_title}\n{article_text[:4000]}
 
 ## 9. Stage 5 — Persist to DB
 
-**Called from:** `ops.py::process_article_v2()` after research agent completes
+**Called from:** `cli/pipeline.py::process_article_v2()` after research agent completes
 
 ```python
 save_article({
@@ -594,7 +586,7 @@ This means source quality is a **lagging signal** — it reflects historical eng
 ## 12. Parallel Path — Legacy Summarizer
 
 **File:** `src/services/summarizer/main.py`  
-**Command:** `uv run techpulse-ops run summarize`
+**Command:** `uv run pulse run summarize`
 
 This is the V1/standalone pipeline — it does summarization **without** the full V2 enricher/ranker/research-agent chain. It's useful for batch-processing queued articles independently.
 
@@ -630,7 +622,7 @@ The first topic in the `topics` list MUST be a concise category (e.g., "Python",
 ## 13. Feedback Loop
 
 **File:** `src/services/ranker/feedback_processor.py`  
-**Command:** `uv run techpulse-ops run feedback-loop --days 7`
+**Command:** `uv run pulse run feedback-loop --days 7`
 
 ### Signal Types
 
@@ -831,7 +823,7 @@ Article URL:  https://arxiv.org/abs/2405.12345
   → mark_seen, mark_title_seen (Redis TTL 7 days)
   → RPC increment_source_ingestion
 
-[Enricher — via ops.py process_article_v2]
+[Enricher — via cli/pipeline.py process_article_v2]
   → embed_text(content) → 768-dim vector
   → is_near_duplicate(embedding) → False (no similar article in DB)
   → novelty_score = 0.91 (only 1 slightly similar article in history)

@@ -29,7 +29,7 @@ The collector runs concurrently across all active RSS sources listed in the `rss
 
 ### 2. The Enrichment Engine (`Enricher`)
 - **Embeddings**: Uses `sentence-transformers/all-mpnet-base-v2` (768-dim) for high-accuracy semantic representation.
-- **Neural Search API**: A serverless Supabase Edge Function (`/embed`) provides real-time query embedding via the Hugging Face Inference API.
+- **Local Embedding Engine**: Embeddings are computed locally on the server via `embedder.py`, which lazily instantiates the model as a thread-safe singleton.
 - **Semantic Deduplication**: Checks `pgvector` index via HNSW for near-identical matches (threshold: 0.92) to suppress redundant news.
 - **Novelty Scoring**: Calculates uniqueness against the user's historical feed using a recency-weighted similarity decay.
 
@@ -53,11 +53,27 @@ TechPulse Pro uses **Supabase Row Level Security (RLS)** to ensure data isolatio
 | `articles` | `auth.uid() = user_id` | Users can only see/delete their own news. |
 | `app_config` | `auth.uid() = user_id` | Topic settings are private per user. |
 | `rss_sources` | `auth.uid() = user_id` | Sources are isolated per tenant. |
-| `tenant_profiles` | `is_admin` | Drives access to the Super Admin Dashboard. |
+| `tenant_profiles` | `auth.uid() = user_id` | Tenant profiles and webhook configurations are isolated. |
 
 ### CLI Tool Contexts:
-- **`techpulse` (User)**: Authenticates as a specific user. It uses the `anon` key + user JWT. Access is restricted by RLS.
-- **`techpulse-ops` (Operator)**: Uses the `service_role` key. It bypasses RLS for system-wide maintenance and pipeline execution, securely managing tenant data.
+- **`pulse` (Unified)**: Handles both user-facing queries (using the user's Supabase JWT) and system operator tasks (like pipeline runs and tenant management using the service-role client).
+
+---
+
+## 🌐 REST API Router
+
+FastAPI server exposing pipeline triggers, user statistics, configuration updates, and interactive cited semantic search. All endpoints require `X-User-Id` request header validations for tenant isolation.
+
+### Endpoints:
+*   `GET /health`: System health status (public).
+*   `GET /config/` / `PUT /config/`: Fetch and update user topic filters.
+*   `GET /config/stats`: Fetch high-level tenant stats (total articles, active sources, last delivery).
+*   `GET /sources/` / `POST /sources/`: List and register new RSS feed sources.
+*   `PATCH /sources/{id}/toggle`: Toggle active/inactive status of an RSS source.
+*   `GET /articles/`: Fetch AI-curated digests scored above delivery threshold.
+*   `POST /articles/{id}/feedback`: Log click/dismiss/save signals.
+*   `POST /pipeline/run`: Manually trigger background ingestion and delivery pipeline.
+*   `POST /search/rag`: Query personal catalog via LangGraph-orchestrated cited RAG.
 
 ---
 
@@ -66,17 +82,20 @@ TechPulse Pro uses **Supabase Row Level Security (RLS)** to ensure data isolatio
 ### Coding Standards
 - **Logging**: Use `loguru` for all observability. Avoid `print()`.
 - **Typing**: Use strict Python type hints (`typing` module) for all function signatures.
-- **Models**: Use `Pydantic` for data validation and schema definitions.
+- **Models**: Use `Pydantic` for data validation and LLM structured outputs.
 
 ### Testing
 We use `pytest` for logic verification.
 ```bash
 # Run unit tests
 PYTHONPATH=src uv run pytest tests/unit
+
+# Run RAG specific unit tests
+PYTHONPATH=src uv run pytest tests/unit/test_rag.py
 ```
 
 ### Resetting the System
 During testing, you can wipe the pipeline state:
 ```bash
-uv run techpulse-ops reset --confirm
+uv run pulse reset --confirm
 ```

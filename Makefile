@@ -15,37 +15,34 @@ deliver:
 ## Run the full pipeline
 pipeline: collect summarize deliver
 
-# ── OPERATOR CLI (techpulse-ops) ──────────────────────────────────────────────
-ops:
-	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.ops $(ARGS)
-
-ops-collect:
-	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.ops run collect
-
-ops-summarize:
-	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.ops run summarize
-
-ops-deliver:
-	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.ops run deliver
-
-ops-all:
-	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.ops run all
-
-ops-tenants:
-	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.ops tenants list
-
-# ── USER CLI (techpulse) ──────────────────────────────────────────────────────
-user:
+# ── UNIFIED CLI (pulse) ───────────────────────────────────────────────────────
+pulse:
 	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.user $(ARGS)
 
-user-login:
+pulse-login:
 	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.user login
 
-user-status:
+pulse-status:
 	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.user status
 
-user-sources:
-	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.user sources list
+pulse-collect:
+	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.user run collect
+
+pulse-summarize:
+	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.user run summarize
+
+pulse-deliver:
+	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.user run deliver
+
+pulse-all:
+	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.user run all
+
+pulse-tenants:
+	PYTHONPATH=$(PYTHONPATH) uv run python -m cli.user tenants list
+
+## API Server
+api:
+	PYTHONPATH=$(PYTHONPATH) uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## Monitoring
 monitor:

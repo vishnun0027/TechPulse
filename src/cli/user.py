@@ -1,9 +1,10 @@
 """
-techpulse - User CLI
+pulse - Unified TechPulse AI CLI
 Authenticates via Supabase email/password. JWT stored in ~/.techpulse/config.json.
-All queries respect Row Level Security - data is scoped to the logged-in user.
+User-facing queries respect Row Level Security. Pipeline operations use service key.
 """
 
+import asyncio
 from pathlib import Path
 
 import typer
@@ -28,13 +29,22 @@ def version_callback(value: bool):
 
 app = typer.Typer(
     name="pulse",
-    help=" [bold cyan]Pulse AI[/bold cyan] - Your personal tech intelligence pipeline",
+    help=" [bold cyan]TechPulse AI[/bold cyan] — Your personal tech intelligence pipeline",
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
 
+# ── Sub-command groups ────────────────────────────────────────────────────────
+
 app.add_typer(feeds_app, name="feeds")
 app.add_typer(filter_app, name="filter")
+
+run_app = typer.Typer(help="Run pipeline services", no_args_is_help=True)
+app.add_typer(run_app, name="run")
+
+tenants_app = typer.Typer(help="Manage system tenants", no_args_is_help=True)
+app.add_typer(tenants_app, name="tenants")
+
 
 @app.callback()
 def main(
@@ -48,61 +58,24 @@ def main(
         logger.add(log_file, rotation="1 MB", level="DEBUG")
         logger.debug("Pulse CLI started in debug mode")
 
+    # Legacy command deprecation warnings
     if ctx.invoked_subcommand == "sources":
         rprint("[yellow]Warning: 'sources' is deprecated. Use 'feeds' instead.[/yellow]")
     if ctx.invoked_subcommand == "topics":
         rprint("[yellow]Warning: 'topics' is deprecated. Use 'filter' instead.[/yellow]")
 
-# ── Onboarding & Auth Commands ────────────────────────────────────────────────
 
-@app.command("init")
-def init(non_interactive: bool = typer.Option(False, "--non-interactive", help="Skip welcome screens")) -> None:
-    """Initialize your Pulse AI environment and link your account."""
-    console.rule("[bold cyan]Welcome to Pulse AI[/bold cyan]")
-
-    if not non_interactive:
-        rprint("\n[dim]Pulse is your personal tech intelligence pipeline.\n"
-               "This command will set up your local environment and link your account.[/dim]\n")
-
-    if CONFIG_PATH.exists():
-        try:
-            session = _load_session()
-            rprint(f"[green]Pulse is already initialized for [bold]{session['email']}[/bold][/green]")
-            if not typer.confirm("Do you want to re-initialize?"):
-                return
-        except Exception:
-            rprint("[yellow]Existing configuration is corrupt. Re-initializing...[/yellow]")
-
-    login()
-
-    client, session = get_user_client()
-    with console.status("Bootstrapping personal intelligence..."):
-        existing = client.table("app_config").select("key").eq("key", "topics").execute()
-        if not existing.data:
-            default_topics = {"allowed": ["ai", "python", "rust"], "blocked": ["crypto"], "priority": []}
-            client.table("app_config").insert({
-                "key": "topics",
-                "value": default_topics,
-                "user_id": session["user_id"]
-            }).execute()
-            rprint("[dim]Initialized default topic filters (AI, Python, Rust).[/dim]")
-
-    rprint("\n[bold green]✓ Initialization Complete![/bold green]")
-    rprint("\n[bold]Next Steps:[/bold]")
-    rprint("  1. Add your first feed: [cyan]pulse feeds add 'Hacker News' https://news.ycombinator.com/rss[/cyan]")
-    rprint("  2. View your status:    [cyan]pulse status[/cyan]")
-    rprint("  3. Read your digest:    [cyan]pulse digest[/cyan]\n")
+# ── Auth Commands ─────────────────────────────────────────────────────────────
 
 @app.command("login")
 def login() -> None:
-    """Log in with your Pulse account (email + password)."""
+    """Log in with your TechPulse account (email + password)."""
     from supabase import create_client
+    from shared.config import settings
 
-    url = "https://dhnujdduifibmalkyzhi.supabase.co"
-    anon_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobnVqZGR1aWZpYm1hbGt5emhpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1MjQxMzMsImV4cCI6MjA5MjEwMDEzM30.vMAWYDZW76V2EgwlJugkF4d053CXWo4efI-yTpwhHVw"
+    url = settings.supabase_url
+    anon_key = settings.supabase_anon_key
 
-    if not url:
-        url = Prompt.ask("Supabase Project URL")
     if not anon_key:
         anon_key = Prompt.ask("Supabase Anon Key", password=True)
 
@@ -138,18 +111,16 @@ def logout() -> None:
 
 @app.command("whoami")
 def whoami() -> None:
-    """Show the currently authenticated user session details."""
+    """Show the currently authenticated user."""
     client, session = get_user_client()
-    res = client.table("tenant_profiles").select("role").eq("user_id", session["user_id"]).execute()
-    role = res.data[0].get("role", "user") if res.data else "user"
+    rprint(f"[bold cyan]{session['email']}[/bold cyan]  [dim](uid: {session['user_id']})[/dim]")
 
-    rprint(f"[bold cyan]{session['email']}[/bold cyan]  [dim](uid: {session['user_id']})[/dim]  [magenta][{role}][/magenta]")
 
 # ── Pipeline Status & Intelligence ────────────────────────────────────────────
 
 @app.command("status")
 def status() -> None:
-    """Show your personal pipeline stats: articles scored, delivered, and pending."""
+    """Show your pipeline stats: articles scored, delivered, and pending."""
     client, session = get_user_client()
 
     total_res = client.table("articles").select("source_url", count="exact").execute()
@@ -173,7 +144,7 @@ def pulse_digest(
     limit: int = typer.Option(10, "--limit", "-l", help="Number of articles to show"),
     min_score: float = typer.Option(3.0, "--min-score", "-s", help="Minimum score threshold"),
 ) -> None:
-    """Fetch and read your latest AI-generated tech intelligence briefing."""
+    """Read your latest AI-generated tech intelligence briefing."""
     from rich.markdown import Markdown
     client, session = get_user_client()
 
@@ -203,7 +174,168 @@ def pulse_digest(
 
     rprint(f"\n[bold green]✓ Showing {len(articles)} items above {min_score} threshold.[/bold green]")
 
+
+# ── Pipeline Run Commands (absorbed from ops CLI) ─────────────────────────────
+
+@run_app.command("collect")
+def run_collect() -> None:
+    """Scrape new articles from all active RSS sources into the processing queue."""
+    from services.collector.main import collect
+    console.rule("[bold blue]Collector Service")
+    collect()
+    rprint("[green]Collector finished.[/green]")
+
+@run_app.command("summarize")
+def run_summarize() -> None:
+    """Analyze and summarize articles from the queue using AI."""
+    from services.summarizer.main import summarize
+    console.rule("[bold blue]Summarizer Service")
+    asyncio.run(summarize())
+    rprint("[green]Summarizer finished.[/green]")
+
+@run_app.command("deliver")
+def run_deliver() -> None:
+    """Send digests to all configured webhooks (Slack/Discord)."""
+    from services.delivery.main import deliver
+    console.rule("[bold blue]Delivery Service")
+    deliver()
+    rprint("[green]Delivery finished.[/green]")
+
+@run_app.command("all")
+def run_all(limit: int = typer.Option(50, "--limit", "-l", help="Number of articles to process from queue")) -> None:
+    """Execute the complete end-to-end pipeline (collect → enrich → deliver)."""
+    from shared.db import supabase as db
+    from cli.pipeline import run_all_async
+    asyncio.run(run_all_async(db, limit=limit))
+
+@run_app.command("feedback-loop")
+def run_feedback_loop(days: int = typer.Option(7, help="Number of days of feedback to process")) -> None:
+    """Process user feedback signals and update source quality scores."""
+    from services.ranker.feedback_processor import process_feedback_batch
+    console.rule("[bold blue]Feedback Loop Service")
+    process_feedback_batch(days=days)
+    rprint("[green]Feedback processing finished.[/green]")
+
+@run_app.command("hf-export")
+def run_hf_export(
+    repo_id: str = typer.Option(..., help="Hugging Face repository ID (e.g. 'user/dataset')"),
+    private: bool = typer.Option(True, help="Whether to keep the dataset private"),
+) -> None:
+    """Export processed intelligence data to a Hugging Face dataset."""
+    from services.ranker.hf_exporter import export_to_hf
+    console.rule("[bold blue]Hugging Face Export Service")
+    export_to_hf(repo_id=repo_id, is_private=private)
+    rprint("[green]Export finished.[/green]")
+
+
+# ── Tenant Management (absorbed from ops CLI) ─────────────────────────────────
+
+@tenants_app.command("list")
+def tenants_list() -> None:
+    """List all registered system tenants and their configured webhook status."""
+    from shared.db import supabase as db
+    with console.status("Fetching tenants..."):
+        try:
+            res = db.table("tenant_profiles").select("user_id, email, role, slack_webhook_url, discord_webhook_url, created_at").execute()
+            rows = res.data or []
+        except Exception as e:
+            rprint(f"[red]Error fetching tenants:[/red] {e}")
+            raise typer.Exit(1)
+
+    if not rows:
+        rprint("[yellow]No tenants registered yet.[/yellow]")
+        raise typer.Exit()
+
+    table = Table(title="Registered TechPulse Tenants", show_lines=True)
+    table.add_column("User ID", style="cyan", no_wrap=True)
+    table.add_column("Email", style="bold")
+    table.add_column("Role", style="magenta", justify="center")
+    table.add_column("Slack", style="dim", justify="center")
+    table.add_column("Discord", style="dim", justify="center")
+    table.add_column("Created At", style="dim")
+
+    for r in rows:
+        table.add_row(
+            r["user_id"], r.get("email", "N/A"), r.get("role", "user"),
+            "✓" if r.get("slack_webhook_url") else "-", "✓" if r.get("discord_webhook_url") else "-",
+            str(r.get("created_at", ""))[:19],
+        )
+    console.print(table)
+
+@tenants_app.command("stats")
+def tenants_stats() -> None:
+    """View per-tenant usage statistics, including delivered and pending article counts."""
+    from collections import defaultdict
+    from shared.db import supabase as db
+    with console.status("Fetching analytics..."):
+        try:
+            res = db.table("articles").select("user_id, is_delivered").execute()
+            rows = res.data or []
+        except Exception as e:
+            rprint(f"[red]Error fetching analytics:[/red] {e}")
+            raise typer.Exit(1)
+
+    counts = defaultdict(lambda: {"total": 0, "delivered": 0})
+    for r in rows:
+        uid = r.get("user_id") or "Unknown"
+        counts[uid]["total"] += 1
+        if r.get("is_delivered"):
+            counts[uid]["delivered"] += 1
+
+    table = Table(title="Per-Tenant Article Analytics", show_lines=True)
+    table.add_column("User ID", style="cyan")
+    table.add_column("Total Scored", justify="right")
+    table.add_column("Delivered", justify="right", style="green")
+    table.add_column("Pending", justify="right", style="yellow")
+
+    for uid, c in sorted(counts.items()):
+        pending = c["total"] - c["delivered"]
+        table.add_row(uid, str(c["total"]), str(c["delivered"]), str(pending))
+
+    console.print(table)
+
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+
+@app.command("monitor")
+def monitor(live: bool = typer.Option(True, "--live/--once", help="Enable auto-refreshing dashboard")) -> None:
+    """Launch the live system monitor to track queue depth and telemetry."""
+    import subprocess
+    import sys
+    args = [sys.executable, "-m", "shared.monitor"]
+    if live:
+        args.append("--live")
+    subprocess.run(args)
+
+
+# ── Maintenance ───────────────────────────────────────────────────────────────
+
+@app.command("reset")
+def reset(confirm: bool = typer.Option(False, "--confirm", help="Must be passed to verify destructive reset")) -> None:
+    """Danger: Wipe ALL data including articles, telemetry, and the Redis stream."""
+    if not confirm:
+        rprint("[red]This will delete ALL data including article history. Pass --confirm to proceed.[/red]")
+        raise typer.Exit(1)
+    from shared.maintenance import reset as do_reset
+    asyncio.run(do_reset())
+    rprint("[bold red]All system data wiped successfully.[/bold red]")
+
+
+@app.command("api")
+def run_api_server(
+    host: str = typer.Option("0.0.0.0", help="Host interface to bind to"),
+    port: int = typer.Option(8000, help="Port to listen on"),
+    reload: bool = typer.Option(True, "--reload/--no-reload", help="Enable auto-reload on code changes"),
+) -> None:
+    """Launch the FastAPI REST server for tech intelligence and management."""
+    import uvicorn
+    console.rule("[bold cyan]TechPulse AI API Server")
+    rprint(f"[dim]Starting server on {host}:{port} (reload={reload})[/dim]")
+    uvicorn.run("api.main:app", host=host, port=port, reload=reload, factory=False)
+
+
 # ── Legacy Aliases ────────────────────────────────────────────────────────────
+
 @app.command("sources", hidden=True)
 def sources_alias():
     rprint("[yellow]Warning: 'sources' is deprecated. Use 'feeds' instead.[/yellow]")
@@ -213,6 +345,7 @@ def sources_alias():
 def topics_alias():
     rprint("[yellow]Warning: 'topics' is deprecated. Use 'filter' instead.[/yellow]")
     topics_show()
+
 
 if __name__ == "__main__":
     app()

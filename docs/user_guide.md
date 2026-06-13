@@ -1,77 +1,91 @@
 # TechPulse AI User Guide
 
-Welcome to your personalized tech intelligence dashboard. This guide explains how to configure your sources and topics to get the most out of the Agentic AI pipeline.
-
-## 📋 User Tiers
-
-### Standard User
-Standard users receive high-quality tech digests based on curated global feeds and their own basic filters.
-- **Topics**: Up to 5 allowed and 5 blocked keywords.
-- **Sources**: Up to **5** personal RSS feeds (quota-enforced).
-
-### Premium User
-Premium users have full control over the intelligence pipeline, including priority boosting and bulk source management.
-- **Topics**: Unlimited keywords + **Priority Boosting** (force high scores for critical interests).
-- **Sources**: Up to **50** personal RSS feeds + **Bulk Import** support.
+Welcome to your personalized tech intelligence assistant. This guide explains how to manage your news feeds, configure your topic filters, read digests, and query your catalog using the unified `pulse` CLI and REST API.
 
 ---
 
-## 🏗️ How to Add RSS Feeds
+## 🏗️ How to Manage RSS Feeds
 
-You can manage your news sources using the `techpulse sources` command group.
+You can manage your news sources using the `pulse feeds` command group. All configurations are stored per-user.
 
-### 1. Add a Single Source (Standard/Premium)
-Use the `add` command to register a new feed by its URL:
+### 1. Add a Single Source
+Use the `add` command to register a new feed by its URL and descriptive name:
 ```bash
-uv run techpulse sources add "Python News" "https://www.python.org/blogs/feed/"
+uv run pulse feeds add "Python News" "https://www.python.org/blogs/feed/"
 ```
 
-### 2. Bulk Import (Premium Only)
-If you have a list of feeds in a text file (one per line, format: `Name | URL`), you can import them all at once:
+### 2. List Active Sources
+See what RSS feeds you are currently tracking:
 ```bash
-uv run techpulse sources import my_feeds.txt
+uv run pulse feeds list
 ```
 
-### 3. List or Remove Sources
+### 3. Remove a Source
+Remove a feed that you no longer need by specifying its database ID (displayed in the feed list):
 ```bash
-# See what you are currently tracking
-uv run techpulse sources list
-
-# Remove a source you no longer need
-uv run techpulse sources remove "https://old-blog.com/feed"
+uv run pulse feeds remove 12
 ```
 
 ---
 
-## 🎯 How to Manage Topic Filters
+## 🎯 How to Configure Topic Filters
 
-Topic filters control what the AI ranks as "relevant" for you.
+Topic filters control what the AI ranks as "relevant" for you, muting noise and boosting critical updates.
 
 ### 1. Set Your Interests
-Use the `topics set` command to update your filters. Use commas to separate multiple keywords.
+Use the `filter set` command to update your filters. Use commas to separate multiple keywords.
+
+*   `--allowed`: General tech topics you want included in your catalog.
+*   `--blocked`: Keywords to completely block from ingestion at the collector level.
+*   `--priority`: Core interests that receive a significant scoring boost to ensure they surface at the top of your briefings.
 
 ```bash
-# Standard Filter
-uv run techpulse topics set --allowed "ai, robotics, space" --blocked "crypto, gaming"
+uv run pulse filter set --allowed "ai, Python, security" --blocked "crypto, gaming, automotive" --priority "ai, Python"
 ```
 
-### 2. Set Priority Boosts (Premium Only)
-Priority keywords give a significant score boost (+1.5 pts) to any article that mentions them, ensuring they appear at the top of your digest.
-
+### 2. View Current Configuration
+To inspect your current active filters:
 ```bash
-# Premium Filter with Priority
-uv run techpulse topics set --allowed "rust, devops" --priority "security, k8s"
+uv run pulse filter show
 ```
 
-### 3. View Current Config
+### 3. Clear Configuration
+To reset all filters back to empty lists:
 ```bash
-uv run techpulse topics show
+uv run pulse filter clear
 ```
 
 ---
 
-## 🚀 Getting Started Flow
-1. **Login**: `uv run techpulse login`
-2. **Setup Topics**: `uv run techpulse topics set --allowed "python, ai"`
-3. **Add Feeds**: `uv run techpulse sources add "TechCrunch" "https://techcrunch.com/feed"`
-4. **Check Status**: `uv run techpulse status` (See how many articles are pending for you)
+## 🚀 Basic Getting Started Flow
+
+1.  **Login**: Authenticate with your Supabase credentials:
+    ```bash
+    uv run pulse login
+    ```
+2.  **Configure Filters**: Define your technical interests:
+    ```bash
+    uv run pulse filter set --allowed "Python, LLM, security" --blocked "crypto" --priority "security"
+    ```
+3.  **Add Feeds**: Add a few technical feeds to scrape:
+    ```bash
+    uv run pulse feeds add "Hacker News" "https://hnrss.org/frontpage"
+    ```
+4.  **Check Status**: View pending items in your queue:
+    ```bash
+    uv run pulse status
+    ```
+5.  **Read Digest**: Render the latest AI-curated digest directly in your terminal:
+    ```bash
+    uv run pulse digest
+    ```
+6.  **Interactive Cited Search (RAG)**: Search your personal knowledge catalog using the REST API:
+    ```bash
+    curl -X 'POST' \
+      'http://localhost:8000/search/rag' \
+      -H 'Content-Type: application/json' \
+      -H 'x-user-id: <your-user-id>' \
+      -d '{
+      "query": "What are the latest breakthroughs in AI agents?"
+    }'
+    ```

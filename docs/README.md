@@ -3,7 +3,7 @@
 Welcome to the technical documentation for TechPulse AI. Choose a guide below to get started:
 
 ### 👤 For Users
-*   **[User Guide](user_guide.md)**: How to use the `techpulse` CLI to manage your news feeds and topics.
+*   **[User Guide](user_guide.md)**: How to use the `pulse` CLI to manage your news feeds and topics.
 *   **[User Configuration](user_config.md)**: Details on the `app_config` and `rss_sources` tables for custom tenant setup.
 
 ### 🛠️ For Developers & Operators

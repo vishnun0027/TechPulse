@@ -4,40 +4,30 @@
 
 ### *Your personal tech intelligence system, curated by Agentic AI.*
 
-TechPulse AI is an intelligent curation assistant designed to monitor tech feeds, eliminate duplicate coverage, track topic novelty, and deliver tailored, high-value narrative digests straight to your Slack or Discord channels.
+Keeping up with the constant stream of technical news, security alerts, and framework releases can feel like a full-time job. We end up reading the same stories across different sites, sorting through clickbait, and trying to filter out what actually matters to our work.
+
+**TechPulse AI** is a smart, AI-powered tech news assistant designed to clean up your daily reading. It monitors your favorite RSS and Atom feeds, eliminates duplicate coverage, tracks topic novelty, and delivers tailored, high-value digests straight to your Slack or Discord channels.
 
 ---
 
-## 🌟 The Core Idea & Vision
-Modern software engineers, developers, and tech leaders are constantly inundated with technical news, security alerts, and framework releases. Keeping up is critical, but the sheer volume of duplicate headlines and low-quality noise makes it incredibly time-consuming.
+## 🌟 The Vision
 
-**TechPulse AI** is built on a simple vision: to turn passive, noisy news feeds into an active tool for professional growth. The system answers a single, essential question for every article it processes: 
+TechPulse AI was built to turn noisy, passive news feeds into an active tool for professional growth. Instead of just sending you a list of headlines, it answers the questions you actually care about:
 
-> *"Tell me only what changed, why it matters, and what I should watch next."*
+> *"What changed, why does it matter, and what should I watch next?"*
 
-By analyzing the semantic meaning of stories rather than relying on basic keyword filters, TechPulse AI filters out redundancy, measures the novelty of incoming coverage, and explains the real-world impact of technology developments before delivering a consolidated morning digest.
+By analyzing the semantic meaning of articles rather than just relying on simple keyword filters, the system filters out redundant stories, measures how new a story's information is, and explains its real-world impact before sending you a clean morning brief.
 
 ---
 
 ## ✨ Key Features
 
-### 1. Ingestion & Filtering
-Easily subscribe to technical blogs, developer channels, or global news feeds. The system automatically fetches and queues incoming articles, filtering out noise and keeping your queue fresh.
-
-### 2. Intelligent Deduplication & Novelty Tracking
-Suppresses "same story, different headline" repeats by evaluating the underlying meaning of articles. The engine measures how novel an incoming article is compared to what you have already read, showing you only genuinely fresh insights.
-
-### 3. Personalized Relevance Ranking
-Tailor your digest through allowed, blocked, and prioritized interests. The engine scores each article dynamically, ensuring critical topics are boosted to the top of your brief while irrelevant categories are muted.
-
-### 4. Context-Aware "Why It Matters" Takeaways
-Instead of raw links, TechPulse reads the context of current and past related articles to generate a concise summary and a dedicated analysis of the story's real-world impact.
-
-### 5. Theme-Grouped Narrative Briefs
-Articles are organized into clear technical themes (such as *Generative AI*, *Developer Tools*, *Security*, and *Research*), accompanied by a narrative summary explaining the day's main technical updates.
-
-### 6. Seamless Workplace Delivery
-Get your curated intelligence delivered directly to Slack or Discord as clean, formatted briefs designed for rapid reading.
+*   **Smart Ingestion & Filtering:** Subscribe to developer blogs, security alerts, or tech news. The system automatically fetches, cleans, and queues new articles.
+*   **Semantic Deduplication:** No more reading the same story three times. The engine understands the meaning of articles, allowing it to skip stories you've already seen, even if they have different headlines.
+*   **Personalized Interest Ranking:** Customize your feed with allowed, blocked, or prioritized topics. The AI ranks articles so the most relevant news rises to the top of your digest.
+*   **"Why It Matters" Key Takeaways:** Instead of raw links, TechPulse reads articles in context to draft clear summaries and explain how the news impacts developers and tech teams.
+*   **Theme-Grouped Narrative Briefs:** News is sorted into clear categories (like AI, Security, or Developer Tools) and written as a cohesive story rather than a disjointed list.
+*   **Workplace Delivery:** Receive polished, easily skimmable digests directly in Slack or Discord.
 
 ---
 
@@ -45,37 +35,29 @@ Get your curated intelligence delivered directly to Slack or Discord as clean, f
 
 ```
 [ Tech Feeds ] ──> [ Ingestion & Dedup ] ──> [ Personal Interest Ranking ] ──> [ Impact Analysis ] ──> [ Tailored Digest ]
+                                                                                                        │
+                                                                                                        ▼
+                                                                                            [ Delivered to Slack/Discord ]
 ```
 
-*   **Ingest**: Pulls articles from your configured feeds.
-*   **Filter & Dedup**: Ignores exact duplicates and stories you've already seen.
-*   **Rank**: Applies your custom filters to score and prioritize articles.
-*   **Analyze**: Synthesizes the core news and highlights its specific importance.
-*   **Deliver**: Packages the highest-scoring updates into theme-based Slack or Discord briefs.
+1.  **Ingest**: Collects new articles from all your configured feeds.
+2.  **Filter & Dedup**: Drops exact duplicates and stories you've already caught up on.
+3.  **Rank**: Scores and sorts articles based on your personal interests.
+4.  **Analyze**: Synthesizes the core news, drafting a summary and explaining its impact.
+5.  **Deliver**: Groups the day's updates by theme and formats them into a clean chat message.
 
 ---
 
 ## 🎯 Who Is It For?
-*   🧑‍💻 **Developers & Architects**: Track new library releases, tooling updates, and framework patterns.
-*   🛡️ **Security Professionals**: Stay on top of CVE vulnerabilities, exploits, and regulatory compliance.
-*   🧠 **AI & ML Engineers**: Monitor new research papers, model releases, and benchmarks.
-*   📈 **Tech Leaders & Managers**: Keep a pulse on industry shifts, funding rounds, and product launches.
+
+*   🧑‍💻 **Developers & Architects**: Track library releases, framework updates, and system design patterns.
+*   🛡️ **Security Professionals**: Stay on top of CVE vulnerabilities, exploits, and security patches.
+*   🧠 **AI & ML Engineers**: Keep up with research papers, new model releases, and benchmarks.
+*   📈 **Tech Leaders**: Follow industry shifts, funding rounds, and major product launches without the noise.
 
 ---
 
-### About
-A CLI-driven, agentic tech intelligence system featuring automated feed collection, semantic deduplication, personalized interest filtering, and Slack/Discord digest delivery.
+## 📖 Getting Started
 
-### Topics
-`python` `cli` `typer` `rich` `rss-feed` `redis` `supabase` `groq` `langchain` `langgraph` `rag` `pgvector` `slack-bot` `discord-bot` `uv` `developer-tools` `automated-news`
+To learn how to install, configure, and run TechPulse AI, head over to our [Documentation Center](docs/README.md).
 
-### Resources
-*   📖 [Documentation Center](docs/README.md)
-*   🐍 [Python 3.12](https://www.python.org/)
-*   ⚡ [uv Package Manager](https://github.com/astral-sh/uv)
-
-### Languages
-*   🐍 **Python**: 85.8%
-*   🗄️ **PLpgSQL**: 11.4%
-*   🐚 **Shell**: 1.8%
-*   🛠️ **Makefile**: 1.0%

@@ -16,20 +16,29 @@ CONFIG_PATH = Path.home() / ".techpulse" / "config.json"
 
 def _load_session() -> Dict[str, Any]:
     if not CONFIG_PATH.exists():
-        rprint("[red]Not logged in. Run: pulse login[/red]")
+        rprint("[red]Not logged in.[/red] Run: [bold cyan]pulse login[/bold cyan]")
         raise typer.Exit(1)
 
-    with open(CONFIG_PATH) as f:
-        session = json.load(f)
-
     try:
-        session["access_token"] = keyring.get_password(SERVICE_NAME, f"{session['user_id']}_access")
-        session["refresh_token"] = keyring.get_password(SERVICE_NAME, f"{session['user_id']}_refresh")
+        with open(CONFIG_PATH) as f:
+            session = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        rprint(f"[red]Corrupt config file at {CONFIG_PATH}.[/red] Run: [bold cyan]pulse login[/bold cyan]")
+        raise typer.Exit(1)
+
+    # Try loading tokens from system keyring first, fall back to file storage
+    try:
+        kr_access = keyring.get_password(SERVICE_NAME, f"{session['user_id']}_access")
+        kr_refresh = keyring.get_password(SERVICE_NAME, f"{session['user_id']}_refresh")
+        if kr_access:
+            session["access_token"] = kr_access
+        if kr_refresh:
+            session["refresh_token"] = kr_refresh
     except Exception:
-        pass
+        pass  # Keyring unavailable — tokens should be in the file already
 
     if not session.get("access_token"):
-        rprint("[red]Session credentials missing. Please login again.[/red]")
+        rprint("[red]Session expired.[/red] Run: [bold cyan]pulse login[/bold cyan]")
         raise typer.Exit(1)
 
     return session
@@ -75,12 +84,23 @@ def _clear_session() -> None:
             pass
         CONFIG_PATH.unlink()
 
+def get_user_id() -> str:
+    """Quick helper to get the logged-in user's ID without creating a full client."""
+    session = _load_session()
+    return session["user_id"]
+
+
 def get_user_client() -> Tuple[Any, Dict[str, Any]]:
     from supabase import create_client
     session = _load_session()
     from shared.config import settings
 
-    client = create_client(settings.supabase_url, session["anon_key"])
+    anon_key = session.get("anon_key") or settings.supabase_anon_key
+    if not anon_key:
+        rprint("[red]Missing Supabase anon key.[/red] Run: [bold cyan]pulse login[/bold cyan]")
+        raise typer.Exit(1)
+
+    client = create_client(settings.supabase_url, anon_key)
     try:
         res = client.auth.set_session(session["access_token"], session["refresh_token"])
         if res.session and res.session.access_token != session["access_token"]:
@@ -89,11 +109,10 @@ def get_user_client() -> Tuple[Any, Dict[str, Any]]:
                 "refresh_token": res.session.refresh_token,
                 "user_id": session["user_id"],
                 "email": session["email"],
-                "anon_key": session["anon_key"],
+                "anon_key": anon_key,
             })
-    except Exception:
-        rprint("[bold red]Vault Access Error.[/bold red] Your session is no longer valid.")
-        rprint("[dim]Please run: [white]pulse login[/white] to re-authenticate.[/dim]")
+    except Exception as e:
+        rprint(f"[bold red]Session expired or invalid.[/bold red] Run: [bold cyan]pulse login[/bold cyan]")
         _clear_session()
         raise typer.Exit(1)
 
