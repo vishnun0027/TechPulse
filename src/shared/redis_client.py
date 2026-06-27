@@ -5,8 +5,17 @@ from shared.config import settings
 from shared.utils import normalize_url
 
 # Initialize Redis client lazily or handle empty config
-redis: Redis = None
-if settings.upstash_redis_rest_url and settings.upstash_redis_rest_token:
+redis = None
+if settings.redis_url:
+    import redis as tcp_redis
+    client = tcp_redis.from_url(settings.redis_url, decode_responses=True)
+    # Monkey-patch standard TCP client with .execute() method to match Upstash signature
+    def custom_execute(*args, **kwargs):
+        cmd = kwargs.get("command") or args[0]
+        return client.execute_command(*cmd)
+    client.execute = custom_execute
+    redis = client
+elif settings.upstash_redis_rest_url and settings.upstash_redis_rest_token:
     redis = Redis(
         url=settings.upstash_redis_rest_url, token=settings.upstash_redis_rest_token
     )
@@ -185,3 +194,61 @@ def delete_from_stream(msg_id: str) -> None:
     Note: Usually acknowledge_message is preferred in consumer group workflows.
     """
     redis.execute(command=["XDEL", STREAM_RAW, msg_id])
+
+
+def get_cached_embedding(text: str) -> List[float] | None:
+    """Retrieves cached vector embedding from Redis if present."""
+    if not redis:
+        return None
+    fp = hashlib.md5(text.encode("utf-8")).hexdigest()
+    try:
+        cached = redis.get(f"embed:{fp}")
+        if cached:
+            import json
+            return json.loads(cached)
+    except Exception as e:
+        from loguru import logger
+        logger.warning(f"Failed to read embedding cache: {e}")
+    return None
+
+
+def set_cached_embedding(text: str, embedding: List[float]) -> None:
+    """Saves calculated vector embedding to Redis with a 30-day TTL."""
+    if not redis:
+        return
+    import json
+    fp = hashlib.md5(text.encode("utf-8")).hexdigest()
+    try:
+        redis.setex(f"embed:{fp}", 2592000, json.dumps(embedding))
+    except Exception as e:
+        from loguru import logger
+        logger.warning(f"Failed to write embedding cache: {e}")
+
+
+def get_cached_rag(user_id: str, query: str) -> Dict[str, Any] | None:
+    """Retrieves cached cited RAG search result from Redis if present."""
+    if not redis:
+        return None
+    fp = hashlib.md5(query.strip().lower().encode("utf-8")).hexdigest()
+    try:
+        cached = redis.get(f"rag_cache:{user_id}:{fp}")
+        if cached:
+            import json
+            return json.loads(cached)
+    except Exception as e:
+        from loguru import logger
+        logger.warning(f"Failed to read RAG cache: {e}")
+    return None
+
+
+def set_cached_rag(user_id: str, query: str, payload: Dict[str, Any]) -> None:
+    """Saves synthesized RAG search response payload to Redis with 1-hour TTL."""
+    if not redis:
+        return
+    import json
+    fp = hashlib.md5(query.strip().lower().encode("utf-8")).hexdigest()
+    try:
+        redis.setex(f"rag_cache:{user_id}:{fp}", 3600, json.dumps(payload))
+    except Exception as e:
+        from loguru import logger
+        logger.warning(f"Failed to write RAG cache: {e}")

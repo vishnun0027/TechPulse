@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # Upstash Redis Settings (Pipeline Queue & Cache)
     upstash_redis_rest_url: str = Field("", description="Upstash Redis REST URL")
     upstash_redis_rest_token: str = Field("", description="Upstash Redis REST token")
+    redis_url: str = Field("", description="Standard TCP Redis URL")
 
     # Pipeline Tuning
     top_n_articles: int = Field(

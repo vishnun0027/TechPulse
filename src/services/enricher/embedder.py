@@ -45,11 +45,20 @@ def embed_text(text: str, api_key: str = None) -> list[float]:
     The api_key argument is kept for API compatibility with the V2 blueprint
     but is not used (embeddings are computed locally).
     """
+    from shared.redis_client import get_cached_embedding, set_cached_embedding
+
+    cached = get_cached_embedding(text)
+    if cached is not None:
+        logger.debug("Embedding cache hit.")
+        return cached
+
     model = get_model()
     truncated = text[:4000]
     try:
         embedding = model.encode(truncated)
-        return embedding.tolist()
+        emb_list = embedding.tolist()
+        set_cached_embedding(text, emb_list)
+        return emb_list
     except Exception as e:
         logger.error(f"Local embedding failed: {e}")
         raise

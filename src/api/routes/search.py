@@ -35,6 +35,12 @@ def perform_rag_search(
     Performs a vector search and cited LLM synthesis (RAG)
     over the user's personal articles catalog.
     """
+    from shared.redis_client import get_cached_rag, set_cached_rag
+
+    cached = get_cached_rag(user_id, request.query)
+    if cached:
+        return cached
+
     groq_api_key = settings.groq_api_key
     if not groq_api_key:
         raise HTTPException(
@@ -64,11 +70,13 @@ def perform_rag_search(
         if result.get("error"):
             raise HTTPException(status_code=500, detail=result["error"])
 
-        return {
+        response_payload = {
             "query": request.query,
             "answer": result.get("synthesized_response", ""),
             "sources": result.get("sources") or []
         }
+        set_cached_rag(user_id, request.query, response_payload)
+        return response_payload
     except HTTPException:
         raise
     except Exception as e:
