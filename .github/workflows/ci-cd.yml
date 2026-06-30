@@ -71,8 +71,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            mkdir -p /home/vishnu/worklab/techpulse-ai
-            cd /home/vishnu/worklab/techpulse-ai
+            mkdir -p /home/vishnu/worklab/techpulse
+            cd /home/vishnu/worklab/techpulse
             if [ ! -d .git ]; then
               git init
               git remote add origin https://github.com/vishnun0027/TechPulse.git

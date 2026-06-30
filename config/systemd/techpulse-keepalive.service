@@ -4,5 +4,5 @@ After=network.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/vishnu/worklab/techpulse-ai
+WorkingDirectory=/home/vishnu/worklab/techpulse
 ExecStart=/home/vishnu/.local/bin/uv run python -c "print('Keeping workflows active')"
