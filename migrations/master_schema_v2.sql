@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS tenant_profiles (
     api_token         TEXT,
     role              TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'auditor', 'premium', 'user')),
     is_admin          BOOLEAN DEFAULT FALSE, -- Deprecated, use 'role'
+    status            TEXT DEFAULT 'active',
     created_at        TIMESTAMPTZ DEFAULT NOW(),
     updated_at        TIMESTAMPTZ DEFAULT NOW()
 );
@@ -66,10 +67,9 @@ CREATE TABLE IF NOT EXISTS article_events (
     user_id           UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     title             TEXT NOT NULL,
     theme             TEXT,                      -- e.g. "Generative AI", "Regulation"
-    description       TEXT,
     centroid_embedding vector(768),
     article_count     INT DEFAULT 1,
-    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    first_seen        TIMESTAMPTZ DEFAULT NOW(),
     updated_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -86,9 +86,9 @@ CREATE TABLE IF NOT EXISTS articles (
     why_it_matters   TEXT,
     topics           TEXT[] DEFAULT '{}',
     theme            TEXT,
-    category         TEXT,
     score            FLOAT DEFAULT 0.0,
     novelty_score    FLOAT DEFAULT 1.0,
+    source_quality   FLOAT DEFAULT 0.5,
     embedding        vector(768),
     source           VARCHAR(100),
     is_delivered     BOOLEAN DEFAULT FALSE,
