@@ -17,9 +17,6 @@ class ArticleAnalysis(BaseModel):
     topics: List[str] = Field(
         description="List of specific technical tags extracted from the content (max 3)."
     )
-    category: Optional[str] = Field(
-        None, description="Primary theme or category assigned to this article."
-    )
     score: Optional[float] = Field(
         None, ge=0.0, le=10.0, description="Relevance score (0-5 in V1, 0-10 in V2)."
     )

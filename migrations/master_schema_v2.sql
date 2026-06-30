@@ -147,6 +147,41 @@ CREATE TABLE IF NOT EXISTS telemetry (
     timestamp   TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- AI Inference Logs: Audit trail for LLM executions
+CREATE TABLE IF NOT EXISTS ai_inference_logs (
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id            UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    article_id         UUID REFERENCES articles(id) ON DELETE SET NULL,
+    service            TEXT NOT NULL,              -- e.g., 'summarizer', 'research_agent'
+    model_name         TEXT NOT NULL,              -- e.g., 'qwen3-32b', 'llama-3.1-8b'
+    prompt_tokens      INT NOT NULL,
+    completion_tokens  INT NOT NULL,
+    cost_usd           NUMERIC(10, 8),             -- Track financial spend
+    latency_ms         INT NOT NULL,
+    guardrail_status   TEXT CHECK (guardrail_status IN ('passed', 'flagged_safety', 'flagged_pii')),
+    created_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Data Compliance Metadata: Privacy and classification tags
+CREATE TABLE IF NOT EXISTS data_compliance_metadata (
+    article_id         UUID PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
+    classification     TEXT NOT NULL DEFAULT 'public' CHECK (classification IN ('public', 'confidential', 'restricted')),
+    pii_scan_status    TEXT CHECK (pii_scan_status IN ('clean', 'scrubbed', 'failed')),
+    pii_entities_found TEXT[],                     -- e.g. ['EMAIL', 'IP_ADDRESS']
+    last_scanned_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Bias & Safety Reports: User-flagged issues for model auditing
+CREATE TABLE IF NOT EXISTS bias_safety_reports (
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id            UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    article_id         UUID REFERENCES articles(id) ON DELETE CASCADE,
+    report_type        TEXT CHECK (report_type IN ('hallucination', 'bias', 'incorrect_summary', 'toxic')),
+    user_comment       TEXT,
+    resolved           BOOLEAN DEFAULT FALSE,
+    created_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 4. ROBUSTNESS: Ensure new columns exist in existing tables
 DO $$ 
 BEGIN
@@ -358,6 +393,9 @@ ALTER TABLE article_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE source_health ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_feedback ENABLE ROW LEVEL SECURITY;
 ALTER TABLE telemetry ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_inference_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE data_compliance_metadata ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bias_safety_reports ENABLE ROW LEVEL SECURITY;
 
 -- Role-aware tenant isolation policies
 
@@ -410,6 +448,29 @@ CREATE POLICY "Feedback - own data write" ON user_feedback FOR INSERT WITH CHECK
 DROP POLICY IF EXISTS "Tenant isolation - Telemetry" ON telemetry;
 CREATE POLICY "Telemetry - own data or admin/auditor read" ON telemetry FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
 CREATE POLICY "Telemetry - system write" ON telemetry FOR INSERT WITH CHECK (auth.uid() = user_id OR get_my_role() = 'admin');
+
+-- ai_inference_logs
+DROP POLICY IF EXISTS "Tenant isolation - AI Inference Logs" ON ai_inference_logs;
+CREATE POLICY "AI Logs - own data or admin/auditor read" ON ai_inference_logs FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
+CREATE POLICY "AI Logs - system write" ON ai_inference_logs FOR INSERT WITH CHECK (auth.uid() = user_id OR get_my_role() = 'admin');
+
+-- data_compliance_metadata
+DROP POLICY IF EXISTS "Tenant isolation - Data Compliance" ON data_compliance_metadata;
+CREATE POLICY "Compliance - own data or admin/auditor read" ON data_compliance_metadata FOR SELECT USING (
+    EXISTS (SELECT 1 FROM articles WHERE id = article_id AND (user_id = auth.uid() OR get_my_role() IN ('admin', 'auditor')))
+);
+CREATE POLICY "Compliance - own data write" ON data_compliance_metadata FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM articles WHERE id = article_id AND user_id = auth.uid())
+);
+CREATE POLICY "Compliance - own data update" ON data_compliance_metadata FOR UPDATE USING (
+    EXISTS (SELECT 1 FROM articles WHERE id = article_id AND (user_id = auth.uid() OR get_my_role() = 'admin'))
+);
+
+-- bias_safety_reports
+DROP POLICY IF EXISTS "Tenant isolation - Bias Safety Reports" ON bias_safety_reports;
+CREATE POLICY "Reports - own data or admin/auditor read" ON bias_safety_reports FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
+CREATE POLICY "Reports - own data write" ON bias_safety_reports FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Reports - own data update" ON bias_safety_reports FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
 
 -- 9. INDEXES
 CREATE INDEX IF NOT EXISTS idx_tenant_profiles_role ON tenant_profiles(role);
