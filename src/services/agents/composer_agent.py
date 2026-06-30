@@ -3,6 +3,10 @@ from groq import Groq
 from supabase import Client
 from loguru import logger
 from services.ranker.scorer import DELIVERY_THRESHOLD, BREAKING_THRESHOLD
+import time
+from shared.db import log_ai_inference
+from shared.config import settings
+
 
 SECTION_THEMES = {
     "Generative AI": [
@@ -139,7 +143,24 @@ def compose_digest(
 Be direct, no fluff. Start with the most important theme.
 Stories:\n{article_titles}"""
 
+        start_time = time.time()
         intro_response = groq_client.invoke(prompt)
+        latency_ms = int((time.time() - start_time) * 1000)
+
+        usage = intro_response.response_metadata.get("token_usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        model_name = intro_response.response_metadata.get("model_name", settings.groq_model)
+
+        log_ai_inference(
+            user_id=user_id,
+            service="composer_agent",
+            model_name=model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            latency_ms=latency_ms,
+        )
+
         from shared.ai_utils import strip_thinking
         intro = strip_thinking(intro_response.content)
 

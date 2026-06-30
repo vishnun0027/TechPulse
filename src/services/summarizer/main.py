@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Optional
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
@@ -11,7 +11,7 @@ from shared.redis_client import (
     read_from_group,
     acknowledge_message,
 )
-from shared.db import save_article, log_telemetry, get_filter_config
+from shared.db import save_article, log_telemetry, get_filter_config, log_ai_inference
 from shared.models import ArticleAnalysis
 
 
@@ -77,7 +77,7 @@ Score criteria (0-10.0):
 
 
 async def call_groq_async(
-    title: str, content: str, source: str, allowed_topics: List[str]
+    title: str, content: str, source: str, allowed_topics: List[str], user_id: Optional[str] = None
 ) -> ArticleAnalysis:
     """
     Calls the Groq LLM to analyze an article with exponential backoff retries.
@@ -87,6 +87,7 @@ async def call_groq_async(
         content: Article content snippet.
         source: Name of the news source.
         allowed_topics: User's configured interests for relevance scoring.
+        user_id: Optional UUID of the tenant to track inference costs.
 
     Returns:
         ArticleAnalysis: Pydantic model with AI results.
@@ -97,11 +98,40 @@ async def call_groq_async(
         else "General high-quality tech intelligence"
     )
 
+    system_template = """You are a senior tech intelligence officer.
+Analyze the article and return valid JSON only:
+{
+  "score": <float 0.0-10.0>,
+  "summary": "<2-3 sentences of core technical takeaway>",
+  "why_it_matters": "<1 sentence on specific urgency or impact>",
+  "topics": ["<Category>", "<tag1>", "<tag2>"]
+}
+
+The FIRST topic in the list MUST be a concise category (e.g., 'Python', 'Rust', 'Cloud', 'AI Research') based on your analysis.
+
+Target Topics (for scoring relevance): {allowed_topics}
+
+Score criteria (0-10.0):
+- Relevance to the Target Topics (0-5.0 pts)
+- Technical depth and insight (0-3.0 pts)
+- Novelty and importance (0-2.0 pts)"""
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_template),
+            ("human", "Title: {title}\nSource: {source}\nContent: {content}"),
+        ]
+    )
+
+    from shared.ai_utils import clean_llm_json
+    import time
+    parser = JsonOutputParser(pydantic_object=ArticleAnalysis)
+
     async for attempt in AsyncRetrying(
         wait=wait_exponential(min=10, max=60), stop=stop_after_attempt(3)
     ):
         with attempt:
-            result = await get_chain().ainvoke(
+            formatted = await prompt.ainvoke(
                 {
                     "title": title,
                     "source": source,
@@ -109,7 +139,29 @@ async def call_groq_async(
                     "allowed_topics": allowed_str,
                 }
             )
-            return ArticleAnalysis(**result)
+
+            start_time = time.time()
+            response = await get_llm().ainvoke(formatted.to_messages())
+            latency_ms = int((time.time() - start_time) * 1000)
+
+            parsed = parser.parse(clean_llm_json(response.content))
+
+            if user_id:
+                usage = response.response_metadata.get("token_usage", {})
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                completion_tokens = usage.get("completion_tokens", 0)
+                model_name = response.response_metadata.get("model_name", settings.groq_model)
+
+                log_ai_inference(
+                    user_id=user_id,
+                    service="summarizer",
+                    model_name=model_name,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    latency_ms=latency_ms,
+                )
+
+            return ArticleAnalysis(**parsed)
 
 
 # ── Main Summarizer ───────────────────────────────────────────────────────────

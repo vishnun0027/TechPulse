@@ -17,8 +17,9 @@ from services.collector.main import collect
 from services.delivery.main import deliver
 from shared.redis_client import read_from_group, acknowledge_message, ensure_group_exists
 from shared.config import settings
-from shared.db import save_article, log_rejection, get_source_quality, get_filter_config
+from shared.db import save_article, log_rejection, get_source_quality, get_filter_config, save_data_compliance_metadata
 from shared.utils import clean_html
+from shared.compliance import scrub_pii, classify_content
 
 
 def _compute_topic_match(article_topics: list[str], user_allowed: list[str]) -> float:
@@ -57,7 +58,8 @@ async def _rank_article(
     title: str,
     content: str,
     source: str,
-    config: Dict[str, Any]
+    config: Dict[str, Any],
+    user_id: str
 ) -> tuple[float, List[str]]:
     allowed_topics = config.get("allowed", [])
     blocked_topics = config.get("blocked", [])
@@ -68,7 +70,7 @@ async def _rank_article(
     # Only refine if it's within the borderline range.
     if 3.0 <= h_score <= 7.5:
         rprint(f"[cyan]Refining article with AI ({h_score}): {title[:40]}...[/cyan]")
-        analysis = await summarizer_main.call_groq_async(title, content, source, allowed_topics)
+        analysis = await summarizer_main.call_groq_async(title, content, source, allowed_topics, user_id=user_id)
         ai_topics = analysis.topics
         final_score = scorer.compute_final_score(scorer.RankSignals(
             base_relevance=analysis.score,
@@ -84,7 +86,8 @@ async def _rank_article(
 async def _research_and_persist_article(
     loop: Any, agent: Any, content: str, title: str, user_id: str,
     embedding: list[float], source: str, url: str, final_score: float,
-    msg_id: str, article: dict, novelty_score: float, event_id: str, ai_topics: List[str]
+    msg_id: str, article: dict, novelty_score: float, event_id: str, ai_topics: List[str],
+    classification: str, pii_scan_status: str, pii_entities_found: List[str]
 ) -> bool:
     result = await loop.run_in_executor(None, agent.invoke, {
         "article_text": content, "article_title": title, "user_id": user_id, "embedding": embedding
@@ -95,16 +98,23 @@ async def _research_and_persist_article(
         acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
         return False
 
-    save_success = save_article({
+    article_id = save_article({
         "user_id": user_id, "source_id": article.get("source_id"), "title": title, "source_url": url, "source": source,
         "content": content, "embedding": embedding, "novelty_score": novelty_score, "event_id": event_id, "score": final_score,
         "summary": result["summary"], "why_it_matters": result["why_it_matters"], "topics": result.get("topics", ai_topics),
         "published_at": article.get("published_at") or None, "v2_processed": True,
     })
 
-    if not save_success:
+    if not article_id:
         logger.error(f"Failed to save processed article: {title}")
         return False
+
+    save_data_compliance_metadata(
+        article_id=article_id,
+        classification=classification,
+        pii_scan_status=pii_scan_status,
+        pii_entities_found=pii_entities_found,
+    )
 
     acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
     rprint(f"[green]PROCESSED: {title[:50]}... [Score: {final_score}][/green]")
@@ -123,21 +133,29 @@ async def process_article_v2(
             content = clean_html(art.get("content", ""))
             config = get_filter_config(user_id)
 
-            if not _triage_article(title, content, config, user_id, source, url):
+            # Compliance: PII Scrubbing & Classification
+            scrubbed_content, content_status, content_entities = scrub_pii(content)
+            scrubbed_title, title_status, title_entities = scrub_pii(title)
+
+            pii_entities_found = list(set(content_entities + title_entities))
+            pii_scan_status = "scrubbed" if ("scrubbed" in (content_status, title_status)) else "clean"
+            classification = classify_content(scrubbed_content + " " + scrubbed_title)
+
+            if not _triage_article(scrubbed_title, scrubbed_content, config, user_id, source, url):
                 acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
                 return False
 
-            embedding = await loop.run_in_executor(None, embedder.embed_text, content or title, GROQ_API_KEY)
+            embedding = await loop.run_in_executor(None, embedder.embed_text, scrubbed_content or scrubbed_title, GROQ_API_KEY)
             if deduplicator.is_near_duplicate(db, embedding, user_id):
-                rprint(f"[dim]SKIP: Near-duplicate: {title[:40]}...[/dim]")
+                rprint(f"[dim]SKIP: Near-duplicate: {scrubbed_title[:40]}...[/dim]")
                 acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
                 return False
 
             novelty_score = novelty.compute_novelty_score(db, embedding, user_id)
-            event_id = clusterer.find_or_create_event(db, summarizer_main.get_llm(), embedding, title, user_id)
+            event_id = clusterer.find_or_create_event(db, summarizer_main.get_llm(), embedding, scrubbed_title, user_id)
 
             quality = get_source_quality(art.get("source_id"), user_id)
-            text_lower = (title + " " + content).lower()
+            text_lower = (scrubbed_title + " " + scrubbed_content).lower()
             keyword_matches = [t for t in config.get("allowed", []) if t.lower() in text_lower]
             blocked_topics = config.get("blocked", [])
             has_priority = any(t.lower() in {pt.lower() for pt in config.get("priority", [])} for t in keyword_matches)
@@ -149,18 +167,19 @@ async def process_article_v2(
                 is_blocked=is_blocked,
             ))
 
-            final_score, ai_topics = await _rank_article(db, h_score, novelty_score, quality, title, content, source, config)
+            final_score, ai_topics = await _rank_article(db, h_score, novelty_score, quality, scrubbed_title, scrubbed_content, source, config, user_id)
 
             if final_score < settings.delivery_threshold:
-                rprint(f"[dim]REJECT: Score {final_score:.1f}: {title[:40]}...[/dim]")
+                rprint(f"[dim]REJECT: Score {final_score:.1f}: {scrubbed_title[:40]}...[/dim]")
                 if final_score >= 2.0:
-                    log_rejection(user_id, title, source, url, final_score, "Below delivery threshold")
+                    log_rejection(user_id, scrubbed_title, source, url, final_score, "Below delivery threshold")
                 acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
                 return False
 
             return await _research_and_persist_article(
-                loop, agent, content, title, user_id, embedding, source, url,
-                final_score, msg_id, art, novelty_score, event_id, ai_topics
+                loop, agent, scrubbed_content, scrubbed_title, user_id, embedding, source, url,
+                final_score, msg_id, art, novelty_score, event_id, ai_topics,
+                classification, pii_scan_status, pii_entities_found
             )
 
         except Exception as e:

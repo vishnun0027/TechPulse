@@ -11,7 +11,7 @@ supabase: Client = create_client(settings.supabase_url, settings.supabase_servic
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def save_article(article: Dict[str, Any]) -> bool:
+def save_article(article: Dict[str, Any]) -> Optional[str]:
     """
     Saves or updates an article in the Supabase 'articles' table.
 
@@ -19,7 +19,7 @@ def save_article(article: Dict[str, Any]) -> bool:
         article: A dictionary containing article fields (title, summary, source_url, etc.).
 
     Returns:
-        bool: True if save/upsert was successful, False otherwise.
+        Optional[str]: The article ID if save/upsert was successful, None otherwise.
     """
     try:
         res = (
@@ -29,10 +29,81 @@ def save_article(article: Dict[str, Any]) -> bool:
         )
         if not res.data:
             logger.error(f"DB save failed (no data returned): {res}")
-            return False
-        return True
+            return None
+        return res.data[0].get("id")
     except Exception as e:
         logger.error(f"DB save error: {e}")
+        return None
+
+
+def calculate_groq_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """Computes pricing in USD based on Groq token costs."""
+    model_lower = model.lower()
+    if "70b" in model_lower:
+        in_cost = 0.59 / 1_000_000
+        out_cost = 0.79 / 1_000_000
+    elif "8b" in model_lower:
+        in_cost = 0.05 / 1_000_000
+        out_cost = 0.08 / 1_000_000
+    elif "mixtral" in model_lower:
+        in_cost = 0.24 / 1_000_000
+        out_cost = 0.24 / 1_000_000
+    else:
+        # Default fallback
+        in_cost = 0.15 / 1_000_000
+        out_cost = 0.20 / 1_000_000
+    return float(prompt_tokens * in_cost + completion_tokens * out_cost)
+
+
+def log_ai_inference(
+    user_id: str,
+    service: str,
+    model_name: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    latency_ms: int,
+    article_id: Optional[str] = None,
+    guardrail_status: Optional[str] = "passed",
+) -> None:
+    """Logs LLM invocation metrics to the 'ai_inference_logs' table."""
+    try:
+        cost = calculate_groq_cost(model_name, prompt_tokens, completion_tokens)
+        payload = {
+            "user_id": user_id,
+            "service": service,
+            "model_name": model_name,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cost_usd": cost,
+            "latency_ms": latency_ms,
+            "guardrail_status": guardrail_status,
+        }
+        if article_id:
+            payload["article_id"] = article_id
+
+        supabase.table("ai_inference_logs").insert(payload).execute()
+    except Exception as e:
+        logger.error(f"Failed to log AI inference metrics: {e}")
+
+
+def save_data_compliance_metadata(
+    article_id: str,
+    classification: str,
+    pii_scan_status: str,
+    pii_entities_found: List[str],
+) -> bool:
+    """Saves PII scan status and content classification metadata."""
+    try:
+        payload = {
+            "article_id": article_id,
+            "classification": classification,
+            "pii_scan_status": pii_scan_status,
+            "pii_entities_found": pii_entities_found,
+        }
+        res = supabase.table("data_compliance_metadata").upsert(payload).execute()
+        return bool(res.data)
+    except Exception as e:
+        logger.error(f"Failed to save data compliance metadata: {e}")
         return False
 
 

@@ -10,6 +10,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from shared.ai_utils import retry_llm_call, clean_llm_json
 from langchain_core.runnables import RunnableLambda
 from shared.config import settings
+import time
+from shared.db import log_ai_inference
 
 
 class ResearchState(TypedDict):
@@ -70,6 +72,7 @@ def _execute_summary_chain(
     history_context: str,
     title: str,
     text: str,
+    user_id: str,
 ) -> Dict[str, Any]:
     """Node 2 helper: executes ChatGroq LLM chain with retries and output cleaning."""
     prompt = ChatPromptTemplate.from_messages(
@@ -86,13 +89,7 @@ def _execute_summary_chain(
             ),
         ]
     )
-    chain = (
-        prompt
-        | llm
-        | RunnableLambda(lambda x: clean_llm_json(x.content))
-        | parser
-    )
-    return chain.invoke(
+    formatted = prompt.invoke(
         {
             "history_context": history_context,
             "title": title,
@@ -100,6 +97,26 @@ def _execute_summary_chain(
             "format_instructions": parser.get_format_instructions(),
         }
     )
+
+    start_time = time.time()
+    response = llm.invoke(formatted.to_messages())
+    latency_ms = int((time.time() - start_time) * 1000)
+
+    usage = response.response_metadata.get("token_usage", {})
+    prompt_tokens = usage.get("prompt_tokens", 0)
+    completion_tokens = usage.get("completion_tokens", 0)
+    model_name = response.response_metadata.get("model_name", settings.groq_research_model)
+
+    log_ai_inference(
+        user_id=user_id,
+        service="research_agent",
+        model_name=model_name,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        latency_ms=latency_ms,
+    )
+
+    return parser.parse(clean_llm_json(response.content))
 
 
 def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
@@ -119,6 +136,7 @@ def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
             history_context=history_context,
             title=state["article_title"],
             text=state["article_text"][:4000],
+            user_id=state["user_id"],
         )
 
         # Extract structured results defensively
