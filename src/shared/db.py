@@ -316,6 +316,22 @@ def get_tenant_profiles() -> List[Dict[str, Any]]:
         return []
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def get_decrypted_tenant_profiles(encryption_key: str) -> List[Dict[str, Any]]:
+    """
+    Fetches tenant profiles with decrypted webhook URLs.
+    """
+    try:
+        res = supabase.rpc(
+            "get_decrypted_tenant_profiles",
+            {"p_key": encryption_key}
+        ).execute()
+        return res.data or []
+    except Exception as e:
+        logger.error(f"Error fetching decrypted tenant profiles: {e}")
+        return get_tenant_profiles()
+
+
 def get_tenant_role(user_id: str) -> str:
     """
     Returns the RBAC role of a tenant.
@@ -399,3 +415,29 @@ def update_source_delivery(source_urls: List[str], user_id: str) -> None:
 
     except Exception as e:
         logger.error(f"Failed to update source delivery stats: {e}")
+
+
+def get_user_centroids(user_id: str) -> tuple[Optional[List[float]], Optional[List[float]]]:
+    """
+    Fetches the average liked and disliked centroid vectors for the user from Supabase.
+    """
+    try:
+        res = supabase.rpc("get_user_centroids", {"p_user_id": user_id}).execute()
+        if res.data:
+            liked_str = res.data[0].get("liked_centroid")
+            disliked_str = res.data[0].get("disliked_centroid")
+
+            def parse_vector(v_str):
+                if not v_str:
+                    return None
+                if isinstance(v_str, list):
+                    return [float(x) for x in v_str]
+                cleaned = v_str.strip("[]")
+                if not cleaned:
+                    return None
+                return [float(x) for x in cleaned.split(",")]
+
+            return parse_vector(liked_str), parse_vector(disliked_str)
+    except Exception as e:
+        logger.error(f"Error fetching user centroids: {e}")
+    return None, None

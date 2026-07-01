@@ -88,6 +88,7 @@ class TestScorerThresholds:
             source_quality=1.0,
             topic_match=1.0,
             priority_boost=1.0,
+            semantic_interest_score=1.0,
         )
         score = compute_final_score(signals)
         assert abs(score - 10.0) < 0.01, f"Max score should be 10.0, got {score}"

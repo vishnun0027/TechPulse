@@ -1,12 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import articles, sources, config, pipeline, search
+from api.rate_limiter import RateLimitMiddleware
 
 app = FastAPI(
     title="TechPulse API",
     description="REST API for TechPulse curated intelligence and management.",
     version="0.1.0",
 )
+
+# Configure Rate Limiting
+app.add_middleware(RateLimitMiddleware)
 
 # Configure CORS
 app.add_middleware(

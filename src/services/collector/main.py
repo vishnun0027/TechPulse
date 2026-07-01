@@ -101,8 +101,31 @@ def _process_feed_entries(feed: Any, src: dict, user_id: str, source_name: str, 
     return queued, skipped
 
 
+DOMAIN_LAST_FETCH_TIME = {}
+DOMAIN_LOCK = asyncio.Lock()
+
+
+async def throttle_domain(url: str):
+    """Enforces a 2-second rate-limiting delay between consecutive fetches of the same domain."""
+    import urllib.parse
+    domain = urllib.parse.urlparse(url).netloc
+    if not domain:
+        return
+
+    async with DOMAIN_LOCK:
+        last_fetch = DOMAIN_LAST_FETCH_TIME.get(domain)
+        if last_fetch:
+            elapsed = (datetime.now(timezone.utc) - last_fetch).total_seconds()
+            delay = 2.0 - elapsed
+            if delay > 0:
+                logger.debug(f"Throttling domain {domain} for {delay:.2f}s...")
+                await asyncio.sleep(delay)
+
+        DOMAIN_LAST_FETCH_TIME[domain] = datetime.now(timezone.utc)
+
+
 async def _collect_source(sem: asyncio.Semaphore, client: httpx.AsyncClient, src: dict, cutoff: datetime) -> tuple[int, int]:
-    """Scrapes a single source asynchronously while respecting a concurrency semaphore."""
+    """Scrapes a single source asynchronously while respecting a concurrency semaphore and domain throttle."""
     user_id = src.get("user_id")
     source_name = src.get("name", "Unknown")
     url = src["url"]
@@ -112,8 +135,8 @@ async def _collect_source(sem: asyncio.Semaphore, client: httpx.AsyncClient, src
 
     async with sem:
         try:
-            # Introduce a small random jitter before starting to avoid traffic spikes
-            await asyncio.sleep(random.uniform(0.5, 2.0))
+            # Enforce domain throttling
+            await throttle_domain(url)
 
             feed_text = await _fetch_rss_feed_async(client, url, source_name)
             if not feed_text:

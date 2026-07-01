@@ -10,6 +10,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from shared.ai_utils import retry_llm_call, clean_llm_json
 from shared.config import settings
 import time
+import json
+import httpx
 from shared.db import log_ai_inference
 
 
@@ -28,7 +30,7 @@ class ResearchState(TypedDict):
 
 def retrieve_history(state: ResearchState, supabase: Client) -> ResearchState:
     """Node 1: Pull top-3 related articles from Supabase pgvector."""
-    state["research_failed"] = False # Initialize
+    state["research_failed"] = False  # Initialize
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=6))
     def _execute_rpc():
@@ -51,6 +53,44 @@ def retrieve_history(state: ResearchState, supabase: Client) -> ResearchState:
     return state
 
 
+def web_search(state: ResearchState) -> ResearchState:
+    """Node 1.5: Query Tavily Search API if enabled and api key configured."""
+    state["web_context"] = "No search performed."
+
+    if not settings.enable_web_search or not settings.tavily_api_key:
+        return state
+
+    logger.info(f"Querying Tavily search context for: {state['article_title']}")
+    try:
+        url = "https://api.tavily.com/search"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "api_key": settings.tavily_api_key,
+            "query": f"{state['article_title']} technical details engineering context",
+            "search_depth": "basic",
+            "max_results": 2,
+        }
+        res = httpx.post(url, json=payload, headers=headers, timeout=10.0)
+        res.raise_for_status()
+        data = res.json()
+
+        results = data.get("results", [])
+        if results:
+            snippets = [
+                f"- {r.get('title')}: {r.get('content')} ({r.get('url')})"
+                for r in results
+            ]
+            state["web_context"] = "\n".join(snippets)
+            logger.info(f"Tavily search retrieved {len(results)} context snippets.")
+        else:
+            state["web_context"] = "Search returned no results."
+    except Exception as e:
+        logger.error(f"Tavily search context query failed: {e}")
+        state["web_context"] = f"Search query failed: {e}"
+
+    return state
+
+
 def _format_history_context(similar_history: List[Dict]) -> str:
     """Helper to format similar article history for the LLM prompt."""
     valid_history = [r for r in similar_history if isinstance(r, dict)]
@@ -69,6 +109,7 @@ def _execute_summary_chain(
     llm: ChatGroq,
     parser: JsonOutputParser,
     history_context: str,
+    web_context: str,
     title: str,
     text: str,
     user_id: str,
@@ -78,19 +119,20 @@ def _execute_summary_chain(
         [
             (
                 "system",
-                "You are a precise tech analyst. Summarize technical articles with historical context. "
+                "You are a precise tech analyst. Summarize technical articles with historical coverage and web context. "
                 "The input may contain technical noise or fragments; focus on the core engineering value and facts. "
                 "{format_instructions}",
             ),
             (
                 "human",
-                "HISTORICAL CONTEXT:\n{history_context}\n\nARTICLE:\n{title}\n{text}",
+                "HISTORICAL COVERAGE:\n{history_context}\n\nWEB SEARCH CONTEXT:\n{web_context}\n\nARTICLE:\n{title}\n{text}",
             ),
         ]
     )
     formatted = prompt.invoke(
         {
             "history_context": history_context,
+            "web_context": web_context,
             "title": title,
             "text": text,
             "format_instructions": parser.get_format_instructions(),
@@ -128,20 +170,22 @@ def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
 
     try:
         history_context = _format_history_context(state.get("similar_history", []))
+        web_context = state.get("web_context", "No search performed.")
 
         result = _execute_summary_chain(
             llm=llm,
             parser=parser,
             history_context=history_context,
+            web_context=web_context,
             title=state["article_title"],
             text=state["article_text"][:4000],
             user_id=state["user_id"],
         )
 
         # Extract structured results defensively
-        if hasattr(result, "dict"): # Pydantic v1
+        if hasattr(result, "dict"):  # Pydantic v1
             res_dict = result.dict()
-        elif hasattr(result, "model_dump"): # Pydantic v2
+        elif hasattr(result, "model_dump"):  # Pydantic v2
             res_dict = result.model_dump()
         else:
             res_dict = result if isinstance(result, dict) else {}
@@ -163,15 +207,63 @@ def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
     return state
 
 
+def verify_facts(state: ResearchState, groq_api_key: str) -> ResearchState:
+    """Node 3: Runs a fast LLM verification to double-check summary against source text."""
+    if state.get("research_failed"):
+        return state
+
+    # Use a fast, cost-efficient model for auditing
+    llm = ChatGroq(
+        model="llama-3.1-8b-instant", api_key=groq_api_key, temperature=0.0
+    )
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You are a factual auditor. Compare the generated summary against the original source article text. "
+                "Check if the summary contains any factual claims, numbers, or assertions that are not found in the original source. "
+                "Respond with JSON format: {{\"hallucinated\": true/false, \"explanation\": \"detail if true\"}}",
+            ),
+            (
+                "human",
+                "SOURCE TEXT:\n{source_text}\n\nGENERATED SUMMARY:\n{summary}\n\nGENERATED WHY IT MATTERS:\n{why_it_matters}",
+            ),
+        ]
+    )
+
+    try:
+        formatted = prompt.invoke({
+            "source_text": state["article_text"][:4000],
+            "summary": state["summary"],
+            "why_it_matters": state["why_it_matters"]
+        })
+        res = llm.invoke(formatted.to_messages())
+
+        cleaned = clean_llm_json(res.content)
+        data = json.loads(cleaned)
+        if data.get("hallucinated"):
+            logger.warning(f"Auditor flagged hallucination for '{state['article_title']}': {data.get('explanation')}")
+            state["why_it_matters"] += f" (Note: Auditor flagged potential coverage differences: {data.get('explanation')})"
+    except Exception as e:
+        logger.error(f"Audit verification node failed: {e}")
+
+    return state
+
+
 def build_research_agent(supabase: Client, groq_api_key: str):
     """Constructs and compiles the LangGraph research agent."""
     graph = StateGraph(ResearchState)
 
     graph.add_node("retrieve_history", lambda s: retrieve_history(s, supabase))
+    graph.add_node("web_search", lambda s: web_search(s))
     graph.add_node("build_summary", lambda s: build_summary(s, groq_api_key))
+    graph.add_node("verify_facts", lambda s: verify_facts(s, groq_api_key))
 
     graph.set_entry_point("retrieve_history")
-    graph.add_edge("retrieve_history", "build_summary")
-    graph.add_edge("build_summary", END)
+    graph.add_edge("retrieve_history", "web_search")
+    graph.add_edge("web_search", "build_summary")
+    graph.add_edge("build_summary", "verify_facts")
+    graph.add_edge("verify_facts", END)
 
     return graph.compile()

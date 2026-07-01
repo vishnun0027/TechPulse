@@ -4,6 +4,7 @@
 
 -- 1. EXTENSIONS
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- 2. UTILITY FUNCTIONS
 -- Automatically update updated_at timestamps
@@ -382,6 +383,91 @@ LANGUAGE sql STABLE AS $$
   SELECT id, article_count, 1 - (centroid_embedding <=> query_embedding) AS similarity
   FROM article_events WHERE user_id = p_user_id AND centroid_embedding IS NOT NULL AND 1 - (centroid_embedding <=> query_embedding) >= threshold
   ORDER BY similarity DESC LIMIT 5;
+$$;
+
+-- 7.2 NEW OPTIMIZED RPC FUNCTIONS FOR V2 EXTENSIONS
+
+-- User Centroids Calculation (Pillar 1)
+CREATE OR REPLACE FUNCTION get_user_centroids(p_user_id UUID)
+RETURNS TABLE (
+    liked_centroid vector(768),
+    disliked_centroid vector(768)
+) SECURITY DEFINER LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN QUERY
+    WITH liked_embeddings AS (
+        SELECT embedding 
+        FROM articles a
+        JOIN user_feedback f ON a.id = f.article_id
+        WHERE f.user_id = p_user_id 
+          AND f.signal IN ('clicked', 'saved', 'more_like_this')
+          AND a.embedding IS NOT NULL
+    ),
+    disliked_embeddings AS (
+        SELECT embedding 
+        FROM articles a
+        JOIN user_feedback f ON a.id = f.article_id
+        WHERE f.user_id = p_user_id 
+          AND f.signal IN ('dismissed', 'less_like_this')
+          AND a.embedding IS NOT NULL
+    )
+    SELECT 
+        (SELECT avg(embedding)::vector(768) FROM liked_embeddings) as liked_centroid,
+        (SELECT avg(embedding)::vector(768) FROM disliked_embeddings) as disliked_centroid;
+END;
+$$;
+
+-- Transparent Webhook Decryption (Pillar 5)
+CREATE OR REPLACE FUNCTION get_decrypted_tenant_profiles(p_key TEXT)
+RETURNS TABLE (
+    user_id UUID,
+    full_name TEXT,
+    email TEXT,
+    slack_webhook_url TEXT,
+    discord_webhook_url TEXT,
+    role TEXT
+) SECURITY DEFINER LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        tp.user_id,
+        tp.full_name,
+        tp.email,
+        CASE 
+            WHEN tp.slack_webhook_url IS NOT NULL AND tp.slack_webhook_url LIKE 'Encrypted:%' THEN
+                pgp_sym_decrypt(decode(substring(tp.slack_webhook_url from 11), 'base64'), p_key)
+            ELSE
+                tp.slack_webhook_url
+        END as slack_webhook_url,
+        CASE 
+            WHEN tp.discord_webhook_url IS NOT NULL AND tp.discord_webhook_url LIKE 'Encrypted:%' THEN
+                pgp_sym_decrypt(decode(substring(tp.discord_webhook_url from 11), 'base64'), p_key)
+            ELSE
+                tp.discord_webhook_url
+        END as discord_webhook_url,
+        tp.role
+    FROM tenant_profiles tp;
+END;
+$$;
+
+-- Symmetric Webhook Encryption (Pillar 5)
+CREATE OR REPLACE FUNCTION encrypt_tenant_webhook(p_user_id UUID, p_webhook_type TEXT, p_webhook_url TEXT, p_key TEXT)
+RETURNS void SECURITY DEFINER LANGUAGE plpgsql AS $$
+DECLARE
+    v_encrypted TEXT;
+BEGIN
+    IF p_webhook_url IS NULL OR p_webhook_url = '' THEN
+        v_encrypted := NULL;
+    ELSE
+        v_encrypted := 'Encrypted:' || encode(pgp_sym_encrypt(p_webhook_url, p_key), 'base64');
+    END IF;
+
+    IF p_webhook_type = 'slack' THEN
+        UPDATE tenant_profiles SET slack_webhook_url = v_encrypted WHERE user_id = p_user_id;
+    ELSIF p_webhook_type = 'discord' THEN
+        UPDATE tenant_profiles SET discord_webhook_url = v_encrypted WHERE user_id = p_user_id;
+    END IF;
+END;
 $$;
 
 -- 8. ROW LEVEL SECURITY (RLS)

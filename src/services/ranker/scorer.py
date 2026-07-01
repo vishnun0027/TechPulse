@@ -10,16 +10,18 @@ class RankSignals:
     source_quality: float  # 0–1: from source_health table
     topic_match: float  # 0–1: ratio of user topics matching article topics
     priority_boost: float  # 1.0 if article matches a priority topic, else 0.0
+    semantic_interest_score: float = 0.0  # -1.0 to 1.0: cosine similarity difference against centroids
     is_blocked: bool = False  # If True, the article matches a negative keyword
 
 
 # Default weights - aligned with docs/dataflow.md
 DEFAULT_WEIGHTS = {
-    "base_relevance": 0.35,
-    "novelty_score": 0.25,
-    "source_quality": 0.20,
+    "base_relevance": 0.30,
+    "novelty_score": 0.20,
+    "source_quality": 0.15,
     "topic_match": 0.15,
     "priority_boost": 0.05,
+    "semantic_interest_score": 0.15,
 }
 
 # Thresholds are read from central config so they can be tuned via .env
@@ -44,6 +46,7 @@ def compute_final_score(signals: RankSignals, weights: dict = DEFAULT_WEIGHTS) -
             + signals.source_quality * weights["source_quality"] * 10.0
             + signals.topic_match * weights["topic_match"] * 10.0
             + signals.priority_boost * weights["priority_boost"] * 10.0
+            + signals.semantic_interest_score * weights["semantic_interest_score"] * 10.0
         )
         return round(min(score, 10.0), 4)
     except Exception as e:

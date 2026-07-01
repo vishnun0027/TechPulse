@@ -1,8 +1,10 @@
 import httpx
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from collections import defaultdict
 from loguru import logger
+from shared.config import settings
 from shared.db import (
     supabase,
     mark_as_delivered,
@@ -56,8 +58,8 @@ def _get_summarizer_lag() -> int:
     return 0
 
 
-def _build_slack_article_blocks(grouped_articles: Dict[str, List[Dict[str, Any]]]) -> list[dict]:
-    """Helper to build Slack Block Kit list of articles partitioned by themes."""
+def _build_slack_article_blocks(grouped_articles: Dict[str, List[Dict[str, Any]]], user_id: str) -> list[dict]:
+    """Helper to build Slack Block Kit list of articles partitioned by themes with action links."""
     blocks = []
     for theme, articles in grouped_articles.items():
         blocks.append(
@@ -69,8 +71,19 @@ def _build_slack_article_blocks(grouped_articles: Dict[str, List[Dict[str, Any]]
             s_insight = (a.get("why_it_matters", "") or "")[:150]
             s_url = a.get("source_url", "#")
             s_score = a.get("score", 0)
+            a_id = a.get("id", "")
 
-            narrative = f"_{s_summary}_"
+            # Redirect link tracking
+            encoded_url = urllib.parse.quote(s_url)
+            click_url = f"{settings.api_base_url}/articles/{a_id}/click?user_id={user_id}&redirect={encoded_url}"
+
+            # Feedback action links
+            like_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=more_like_this"
+            dislike_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=less_like_this"
+            save_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=saved"
+
+            actions_mrkdwn = f"[ <{like_url}|👍 Like> | <{dislike_url}|👎 Dislike> | <{save_url}|📌 Save> ]"
+            narrative = f"_{s_summary}_\n> {actions_mrkdwn}"
             if s_insight:
                 narrative += f"\n> *Insight:* {s_insight}"
 
@@ -79,12 +92,12 @@ def _build_slack_article_blocks(grouped_articles: Dict[str, List[Dict[str, Any]]
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"• <{s_url}|{s_title}>\n  {narrative}",
+                        "text": f"• <{click_url}|{s_title}>\n  {narrative}",
                     },
                     "accessory": {
                         "type": "button",
                         "text": {"type": "plain_text", "text": f"{s_score}"},
-                        "url": s_url,
+                        "url": click_url,
                     },
                 }
             )
@@ -93,7 +106,7 @@ def _build_slack_article_blocks(grouped_articles: Dict[str, List[Dict[str, Any]]
 
 
 def slack_payload(
-    grouped_articles: Dict[str, List[Dict[str, Any]]], intro: Optional[str] = None
+    grouped_articles: Dict[str, List[Dict[str, Any]]], user_id: str, intro: Optional[str] = None
 ) -> Dict[str, Any]:
     """Generates a Slack Block Kit payload for the digest."""
     blocks = [
@@ -112,7 +125,7 @@ def slack_payload(
     total_count = sum(len(v) for v in grouped_articles.values())
 
     # Build article blocks but respect Slack's 50-block limit
-    article_blocks = _build_slack_article_blocks(grouped_articles)
+    article_blocks = _build_slack_article_blocks(grouped_articles, user_id)
 
     # We need to leave room for the footer (1 block) and header/divider (3 blocks)
     # Total limit: 50. Headers/Intro/Divider = 3-4 blocks. Footer = 1 block.
@@ -144,7 +157,7 @@ def slack_payload(
 
 
 def discord_payload_chunks(
-    grouped_articles: Dict[str, List[Dict[str, Any]]], intro: Optional[str] = None
+    grouped_articles: Dict[str, List[Dict[str, Any]]], user_id: str, intro: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """Generates Discord Markdown payloads, split into chunks to stay under character limits."""
     chunks = []
@@ -167,9 +180,21 @@ def discord_payload_chunks(
                 if a.get("why_it_matters")
                 else ""
             )
+            a_id = a.get("id", "")
+            orig_url = a.get("source_url", "#")
+            encoded_url = urllib.parse.quote(orig_url)
+            click_url = f"{settings.api_base_url}/articles/{a_id}/click?user_id={user_id}&redirect={encoded_url}"
+
+            like_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=more_like_this"
+            dislike_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=less_like_this"
+            save_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=saved"
+
+            actions = f"[👍 Like]({like_url}) | [👎 Dislike]({dislike_url}) | [📌 Save]({save_url})"
+
             entry = (
-                f"**{i}. [{a['title']}](<{a['source_url']}>)** (Score: {a['score']})\n"
-                f"> {a['summary']}{insight}\n\n"
+                f"**{i}. [{a['title']}](<{click_url}>)** (Score: {a['score']})\n"
+                f"> {a['summary']}{insight}\n"
+                f"> Actions: {actions}\n\n"
             )
             if len(current) + len(entry) > 1900:
                 chunks.append({"content": current})
@@ -200,7 +225,7 @@ def _get_delivery_data(target_user_id: Optional[str] = None, digest: Optional[Di
     all_articles = (
         supabase.table("articles")
         .select(
-            "user_id, title, summary, why_it_matters, source_url, source, score, topics"
+            "id, user_id, title, summary, why_it_matters, source_url, source, score, topics"
         )
         .gte(
             "created_at",
@@ -244,7 +269,7 @@ def _deliver_to_user_webhooks(client: httpx.Client, user_id: str, profile: dict,
         return 0
 
     if slack_url:
-        payload = slack_payload(grouped, intro=intro)
+        payload = slack_payload(grouped, user_id, intro=intro)
         payload["blocks"][0]["text"]["text"] = f"Hi {user_name}, here is your TechPulse Digest"
         try:
             client.post(slack_url, json=payload, timeout=10).raise_for_status()
@@ -253,7 +278,7 @@ def _deliver_to_user_webhooks(client: httpx.Client, user_id: str, profile: dict,
             logger.error(f"Slack failed for {user_id}: {e}")
 
     if discord_url:
-        chunks = discord_payload_chunks(grouped, intro=intro)
+        chunks = discord_payload_chunks(grouped, user_id, intro=intro)
         if chunks:
             chunks[0]["content"] = chunks[0]["content"].replace("Smart Digest", f"Digest for {user_name}")
         for i, chunk in enumerate(chunks):
@@ -283,7 +308,13 @@ def deliver(
         logger.warning("No articles ready to send")
         return
 
-    tenant_profiles = {p["user_id"]: p for p in get_tenant_profiles()}
+    # Load decrypted profiles if encryption key is configured
+    if settings.encryption_key:
+        from shared.db import get_decrypted_tenant_profiles
+        profiles_list = get_decrypted_tenant_profiles(settings.encryption_key)
+    else:
+        profiles_list = get_tenant_profiles()
+    tenant_profiles = {p["user_id"]: p for p in profiles_list}
     total_delivered_count = 0
 
     with httpx.Client(timeout=15.0) as client:

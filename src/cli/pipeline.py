@@ -32,6 +32,41 @@ def _compute_topic_match(article_topics: list[str], user_allowed: list[str]) -> 
     return round(len(matches) / len(union), 4) if union else 0.5
 
 
+USER_CENTROIDS_CACHE = {}
+
+
+def get_cached_user_centroids(user_id: str) -> tuple[Any, Any]:
+    if user_id not in USER_CENTROIDS_CACHE:
+        from shared.db import get_user_centroids
+        USER_CENTROIDS_CACHE[user_id] = get_user_centroids(user_id)
+    return USER_CENTROIDS_CACHE[user_id]
+
+
+def cosine_similarity(u: list[float], v: list[float]) -> float:
+    if not u or not v:
+        return 0.0
+    import math
+    dot = sum(x * y for x, y in zip(u, v))
+    norm_u = math.sqrt(sum(x * x for x in u))
+    norm_v = math.sqrt(sum(x * x for x in v))
+    if norm_u == 0.0 or norm_v == 0.0:
+        return 0.0
+    return dot / (norm_u * norm_v)
+
+
+def compute_semantic_interest_score(embedding: list[float], user_id: str) -> float:
+    liked, disliked = get_cached_user_centroids(user_id)
+    if not liked and not disliked:
+        return 0.0
+
+    score = 0.0
+    if liked:
+        score += cosine_similarity(embedding, liked)
+    if disliked:
+        score -= cosine_similarity(embedding, disliked)
+    return score
+
+
 def _triage_article(title: str, content: str, config: Dict[str, Any], user_id: str, source: str, url: str) -> bool:
     if len(content) < 200:
         rprint(f"[yellow]SKIP: Content too short ({len(content)} chars): {title[:40]}...[/yellow]")
@@ -59,7 +94,8 @@ async def _rank_article(
     content: str,
     source: str,
     config: Dict[str, Any],
-    user_id: str
+    user_id: str,
+    embedding: list[float]
 ) -> tuple[float, List[str]]:
     allowed_topics = config.get("allowed", [])
     blocked_topics = config.get("blocked", [])
@@ -72,12 +108,14 @@ async def _rank_article(
         rprint(f"[cyan]Refining article with AI ({h_score}): {title[:40]}...[/cyan]")
         analysis = await summarizer_main.call_groq_async(title, content, source, allowed_topics, user_id=user_id)
         ai_topics = analysis.topics
+        interest_score = compute_semantic_interest_score(embedding, user_id)
         final_score = scorer.compute_final_score(scorer.RankSignals(
             base_relevance=analysis.score,
             novelty_score=novelty_score,
             source_quality=quality,
             topic_match=_compute_topic_match(ai_topics, allowed_topics),
             priority_boost=1.0 if any(t.lower() in priority_topics for t in ai_topics) else 0.0,
+            semantic_interest_score=interest_score,
             is_blocked=any(t.lower() in {b.lower() for b in blocked_topics} for t in ai_topics),
         ))
     return final_score, ai_topics
@@ -161,13 +199,15 @@ async def process_article_v2(
             has_priority = any(t.lower() in {pt.lower() for pt in config.get("priority", [])} for t in keyword_matches)
             is_blocked = any(b.lower() in text_lower for b in blocked_topics if b)
 
+            interest_score = compute_semantic_interest_score(embedding, user_id)
             h_score = scorer.compute_final_score(scorer.RankSignals(
                 base_relevance=4.0, novelty_score=novelty_score, source_quality=quality,
                 topic_match=0.6 if keyword_matches else 0.4, priority_boost=1.0 if has_priority else 0.0,
+                semantic_interest_score=interest_score,
                 is_blocked=is_blocked,
             ))
 
-            final_score, ai_topics = await _rank_article(db, h_score, novelty_score, quality, scrubbed_title, scrubbed_content, source, config, user_id)
+            final_score, ai_topics = await _rank_article(db, h_score, novelty_score, quality, scrubbed_title, scrubbed_content, source, config, user_id, embedding)
 
             if final_score < settings.delivery_threshold:
                 rprint(f"[dim]REJECT: Score {final_score:.1f}: {scrubbed_title[:40]}...[/dim]")
