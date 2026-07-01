@@ -8,10 +8,12 @@ from langchain_core.messages import AIMessage
 client = TestClient(app, raise_server_exceptions=True)
 TEST_USER_ID = "ab05c507-fd62-44c4-80de-c1b2ae4f0bf2"
 
+@patch("shared.redis_client.get_cached_rag", return_value=None)
+@patch("shared.redis_client.set_cached_rag")
 @patch("services.agents.rag_agent.embed_text")
 @patch("api.routes.search.supabase")
 @patch("services.agents.rag_agent.ChatGroq")
-def test_rag_search_success(mock_chat_groq, mock_supabase, mock_embed):
+def test_rag_search_success(mock_chat_groq, mock_supabase, mock_embed, mock_set_cache, mock_get_cache):
     # Mock query embedding generation
     mock_embed.return_value = [0.1] * 768
 
@@ -61,9 +63,11 @@ def test_rag_search_success(mock_chat_groq, mock_supabase, mock_embed):
         }
     )
 
+@patch("shared.redis_client.get_cached_rag", return_value=None)
+@patch("shared.redis_client.set_cached_rag")
 @patch("services.agents.rag_agent.embed_text")
 @patch("api.routes.search.supabase")
-def test_rag_search_no_articles(mock_supabase, mock_embed):
+def test_rag_search_no_articles(mock_supabase, mock_embed, mock_set_cache, mock_get_cache):
     # Mock query embedding generation
     mock_embed.return_value = [0.1] * 768
 

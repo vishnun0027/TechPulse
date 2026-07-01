@@ -8,7 +8,6 @@ from langchain_core.output_parsers import JsonOutputParser
 from shared.models import ArticleAnalysis
 from tenacity import retry, stop_after_attempt, wait_exponential
 from shared.ai_utils import retry_llm_call, clean_llm_json
-from langchain_core.runnables import RunnableLambda
 from shared.config import settings
 import time
 from shared.db import log_ai_inference
