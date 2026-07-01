@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     supabase_url: str = Field(..., description="Supabase project URL")
     supabase_service_key: str = Field(..., alias="SUPABASE_KEY", description="Supabase service role key (Secret)")
     supabase_anon_key: str = Field("", alias="SUPABASE_ANON_KEY", description="Supabase anon/public key")
+    database_url: str = Field("", description="Supabase Direct PostgreSQL URL")
 
     # Upstash Redis Settings (Pipeline Queue & Cache)
     upstash_redis_rest_url: str = Field("", description="Upstash Redis REST URL")

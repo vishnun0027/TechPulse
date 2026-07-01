@@ -8,7 +8,8 @@ from shared.utils import normalize_url
 redis = None
 if settings.redis_url:
     import redis as tcp_redis
-    client = tcp_redis.from_url(settings.redis_url, decode_responses=True)
+    pool = tcp_redis.ConnectionPool.from_url(settings.redis_url, decode_responses=True)
+    client = tcp_redis.Redis(connection_pool=pool)
     # Monkey-patch standard TCP client with .execute() method to match Upstash signature
     def custom_execute(*args, **kwargs):
         cmd = kwargs.get("command") or args[0]
@@ -22,6 +23,25 @@ elif settings.upstash_redis_rest_url and settings.upstash_redis_rest_token:
 
 STREAM_RAW = "stream:raw"
 DEDUP_TTL = settings.dedup_ttl_days * 86400
+
+
+def ping_redis() -> bool:
+    """
+    Pings the Redis server (self-hosted or Upstash REST) to verify health.
+    Returns True if healthy, False if down/unreachable.
+    """
+    if not redis:
+        return False
+    try:
+        if settings.redis_url:
+            return bool(redis.ping())
+        else:
+            res = redis.execute(command=["PING"])
+            return res == "PONG" or res is not None
+    except Exception as e:
+        from loguru import logger
+        logger.error(f"Redis health check failed: {e}")
+        return False
 
 
 def check_seen(url: str, user_id: str) -> bool:

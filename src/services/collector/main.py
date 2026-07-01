@@ -1,6 +1,7 @@
 import time
 import calendar
 import random
+import asyncio
 from datetime import datetime, timedelta, timezone
 import feedparser
 import httpx
@@ -30,8 +31,8 @@ USER_AGENTS = [
 ]
 
 
-def _fetch_rss_feed(client: httpx.Client, url: str, source_name: str) -> str | None:
-    """Helper to fetch feed content with multiple protocol/SSL fallbacks."""
+async def _fetch_rss_feed_async(client: httpx.AsyncClient, url: str, source_name: str) -> str | None:
+    """Helper to fetch feed content with multiple protocol/SSL fallbacks asynchronously."""
     headers = {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -42,7 +43,7 @@ def _fetch_rss_feed(client: httpx.Client, url: str, source_name: str) -> str | N
     }
 
     try:
-        response = client.get(url, headers=headers)
+        response = await client.get(url, headers=headers)
         if response.status_code == 403:
             logger.warning(f"[{source_name}] 403 Forbidden. Skipping: {url}")
             return None
@@ -52,8 +53,8 @@ def _fetch_rss_feed(client: httpx.Client, url: str, source_name: str) -> str | N
         logger.debug(f"[{source_name}] Connection error {type(e).__name__}, retrying with basic settings")
         try:
             # Fallback for specifically tricky servers that might dislike HTTP/2 or strict SSL
-            with httpx.Client(http2=False, timeout=20.0, follow_redirects=True, verify=False) as fallback_client:
-                response = fallback_client.get(url, headers=headers)
+            async with httpx.AsyncClient(http2=False, timeout=20.0, follow_redirects=True, verify=False) as fallback_client:
+                response = await fallback_client.get(url, headers=headers)
                 response.raise_for_status()
                 return response.text
         except Exception as fe:
@@ -101,46 +102,69 @@ def _process_feed_entries(feed: Any, src: dict, user_id: str, source_name: str, 
     return queued, skipped
 
 
-def collect() -> None:
-    logger.info("Starting collection...")
-    total_queued: int = 0
-    total_skipped: int = 0
+async def _collect_source(sem: asyncio.Semaphore, client: httpx.AsyncClient, src: dict, cutoff: datetime) -> tuple[int, int]:
+    """Scrapes a single source asynchronously while respecting a concurrency semaphore."""
+    user_id = src.get("user_id")
+    source_name = src.get("name", "Unknown")
+    url = src["url"]
+
+    if not user_id:
+        return 0, 0
+
+    async with sem:
+        try:
+            # Introduce a small random jitter before starting to avoid traffic spikes
+            await asyncio.sleep(random.uniform(0.5, 2.0))
+
+            feed_text = await _fetch_rss_feed_async(client, url, source_name)
+            if not feed_text:
+                return 0, 0
+
+            feed = feedparser.parse(feed_text)
+
+            if not feed.entries:
+                snippet = feed_text[:200].replace("\n", " ").strip()
+                logger.warning(f"[{source_name}] No entries found. Body starts with: {snippet}")
+                return 0, 0
+
+            queued, skipped = _process_feed_entries(feed, src, user_id, source_name, cutoff)
+            logger.info(f"[{source_name}] done.")
+            return queued, skipped
+        except Exception as e:
+            logger.error(f"[{source_name}] failed: {e}")
+            return 0, 0
+
+
+async def collect_async() -> None:
+    """Async core of the collection service."""
+    logger.info("Starting collection (Async)...")
     sources = get_rss_sources()
     cutoff = datetime.now(timezone.utc) - timedelta(days=settings.collection_interval_days)
 
-    with httpx.Client(http2=True, timeout=20.0, follow_redirects=True) as client:
-        for src in sources:
-            user_id = src.get("user_id")
-            source_name = src.get("name", "Unknown")
-            url = src["url"]
+    # Bounded by max_concurrency settings
+    sem = asyncio.Semaphore(settings.max_concurrency)
 
-            if not user_id:
-                continue
+    async with httpx.AsyncClient(http2=True, timeout=20.0, follow_redirects=True) as client:
+        tasks = [_collect_source(sem, client, src, cutoff) for src in sources]
+        results = await asyncio.gather(*tasks)
 
-            try:
-                feed_text = _fetch_rss_feed(client, url, source_name)
-                if not feed_text:
-                    continue
-
-                feed = feedparser.parse(feed_text)
-
-                if not feed.entries:
-                    snippet = feed_text[:200].replace("\n", " ").strip()
-                    logger.warning(f"[{source_name}] No entries found. Body starts with: {snippet}")
-                    continue
-
-                queued, skipped = _process_feed_entries(feed, src, user_id, source_name, cutoff)
-                total_queued += queued
-                total_skipped += skipped
-
-                logger.info(f"[{source_name}] done.")
-                time.sleep(random.uniform(2.0, 5.0))  # Jitter to look human
-
-            except Exception as e:
-                logger.error(f"[{source_name}] failed: {e}")
+    total_queued = sum(r[0] for r in results)
+    total_skipped = sum(r[1] for r in results)
 
     logger.success(f"Collection complete - {total_queued} queued, {total_skipped} skipped")
     log_telemetry("collector", {"total_sources": len(sources), "queued": total_queued, "skipped": total_skipped})
+
+
+def collect() -> None:
+    """Synchronous wrapper for entry points and systemd execution."""
+    try:
+        asyncio.run(collect_async())
+    except RuntimeError:
+        new_loop = asyncio.new_event_loop()
+        try:
+            new_loop.run_until_complete(collect_async())
+        finally:
+            new_loop.close()
 
 
 if __name__ == "__main__":

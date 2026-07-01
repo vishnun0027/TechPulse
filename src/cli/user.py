@@ -177,9 +177,16 @@ def pulse_digest(
 
 # ── Pipeline Run Commands (absorbed from ops CLI) ─────────────────────────────
 
+def _check_redis_health() -> None:
+    from shared.redis_client import ping_redis
+    if not ping_redis():
+        rprint("[bold red]ERROR: Redis server is unreachable. Please verify that your Redis service is running.[/bold red]")
+        raise typer.Exit(code=1)
+
 @run_app.command("collect")
 def run_collect() -> None:
     """Scrape new articles from all active RSS sources into the processing queue."""
+    _check_redis_health()
     from services.collector.main import collect
     console.rule("[bold blue]Collector Service")
     collect()
@@ -188,6 +195,7 @@ def run_collect() -> None:
 @run_app.command("summarize")
 def run_summarize() -> None:
     """Analyze and summarize articles from the queue using AI."""
+    _check_redis_health()
     from services.summarizer.main import summarize
     console.rule("[bold blue]Summarizer Service")
     asyncio.run(summarize())
@@ -196,6 +204,7 @@ def run_summarize() -> None:
 @run_app.command("deliver")
 def run_deliver() -> None:
     """Send digests to all configured webhooks (Slack/Discord)."""
+    _check_redis_health()
     from services.delivery.main import deliver
     console.rule("[bold blue]Delivery Service")
     deliver()
@@ -204,6 +213,7 @@ def run_deliver() -> None:
 @run_app.command("all")
 def run_all(limit: int = typer.Option(50, "--limit", "-l", help="Number of articles to process from queue")) -> None:
     """Execute the complete end-to-end pipeline (collect → enrich → deliver)."""
+    _check_redis_health()
     from shared.db import supabase as db
     from cli.pipeline import run_all_async
     asyncio.run(run_all_async(db, limit=limit))

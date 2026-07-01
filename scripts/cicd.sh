@@ -53,6 +53,9 @@ if [ "$RUN_CD" = true ]; then
     echo "--- Syncing dependencies ---"
     uv sync --frozen
 
+    echo "--- Running database migrations ---"
+    uv run python scripts/migrate.py
+
     echo "--- Installing systemd service files ---"
     mkdir -p "$HOME/.config/systemd/user/"
     cp "$PROJECT_DIR"/config/systemd/* "$HOME/.config/systemd/user/"
