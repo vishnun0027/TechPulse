@@ -486,7 +486,12 @@ ALTER TABLE bias_safety_reports ENABLE ROW LEVEL SECURITY;
 -- Role-aware tenant isolation policies
 
 -- tenant_profiles
+-- tenant_profiles
 DROP POLICY IF EXISTS "Tenant isolation - Profiles" ON tenant_profiles;
+DROP POLICY IF EXISTS "Profiles - own data or admin/auditor read" ON tenant_profiles;
+DROP POLICY IF EXISTS "Profiles - own data write" ON tenant_profiles;
+DROP POLICY IF EXISTS "Profiles - own data update" ON tenant_profiles;
+DROP POLICY IF EXISTS "Profiles - admin delete only" ON tenant_profiles;
 CREATE POLICY "Profiles - own data or admin/auditor read" ON tenant_profiles FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
 CREATE POLICY "Profiles - own data write" ON tenant_profiles FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Profiles - own data update" ON tenant_profiles FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
@@ -494,12 +499,19 @@ CREATE POLICY "Profiles - admin delete only" ON tenant_profiles FOR DELETE USING
 
 -- app_config
 DROP POLICY IF EXISTS "Tenant isolation - Config" ON app_config;
+DROP POLICY IF EXISTS "Config - own data or admin/auditor read" ON app_config;
+DROP POLICY IF EXISTS "Config - own data write" ON app_config;
+DROP POLICY IF EXISTS "Config - own data update" ON app_config;
 CREATE POLICY "Config - own data or admin/auditor read" ON app_config FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
 CREATE POLICY "Config - own data write" ON app_config FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Config - own data update" ON app_config FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
 
 -- rss_sources
 DROP POLICY IF EXISTS "Tenant isolation - Sources" ON rss_sources;
+DROP POLICY IF EXISTS "Sources - own data or admin/auditor read" ON rss_sources;
+DROP POLICY IF EXISTS "Sources - quota-gated insert" ON rss_sources;
+DROP POLICY IF EXISTS "Sources - own data update" ON rss_sources;
+DROP POLICY IF EXISTS "Sources - own data delete" ON rss_sources;
 CREATE POLICY "Sources - own data or admin/auditor read" ON rss_sources FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
 CREATE POLICY "Sources - quota-gated insert" ON rss_sources FOR INSERT WITH CHECK (auth.uid() = user_id AND can_add_rss_source(auth.uid()));
 CREATE POLICY "Sources - own data update" ON rss_sources FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
@@ -507,6 +519,10 @@ CREATE POLICY "Sources - own data delete" ON rss_sources FOR DELETE USING (auth.
 
 -- articles
 DROP POLICY IF EXISTS "Tenant isolation - Articles" ON articles;
+DROP POLICY IF EXISTS "Articles - own data or admin/auditor read" ON articles;
+DROP POLICY IF EXISTS "Articles - own data write" ON articles;
+DROP POLICY IF EXISTS "Articles - own data update" ON articles;
+DROP POLICY IF EXISTS "Articles - own data delete" ON articles;
 CREATE POLICY "Articles - own data or admin/auditor read" ON articles FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
 CREATE POLICY "Articles - own data write" ON articles FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Articles - own data update" ON articles FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
@@ -514,6 +530,10 @@ CREATE POLICY "Articles - own data delete" ON articles FOR DELETE USING (auth.ui
 
 -- article_events
 DROP POLICY IF EXISTS "Tenant isolation - Events" ON article_events;
+DROP POLICY IF EXISTS "Events - own data or admin/auditor read" ON article_events;
+DROP POLICY IF EXISTS "Events - own data write" ON article_events;
+DROP POLICY IF EXISTS "Events - own data update" ON article_events;
+DROP POLICY IF EXISTS "Events - own data delete" ON article_events;
 CREATE POLICY "Events - own data or admin/auditor read" ON article_events FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
 CREATE POLICY "Events - own data write" ON article_events FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Events - own data update" ON article_events FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
@@ -521,27 +541,39 @@ CREATE POLICY "Events - own data delete" ON article_events FOR DELETE USING (aut
 
 -- source_health
 DROP POLICY IF EXISTS "Tenant isolation - Stats" ON source_health;
+DROP POLICY IF EXISTS "SourceHealth - own data or admin/auditor read" ON source_health;
+DROP POLICY IF EXISTS "SourceHealth - own data write" ON source_health;
+DROP POLICY IF EXISTS "SourceHealth - own data update" ON source_health;
 CREATE POLICY "SourceHealth - own data or admin/auditor read" ON source_health FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
 CREATE POLICY "SourceHealth - own data write" ON source_health FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "SourceHealth - own data update" ON source_health FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
 
 -- user_feedback
 DROP POLICY IF EXISTS "Tenant isolation - Feedback" ON user_feedback;
+DROP POLICY IF EXISTS "Feedback - own data or admin/auditor read" ON user_feedback;
+DROP POLICY IF EXISTS "Feedback - own data write" ON user_feedback;
 CREATE POLICY "Feedback - own data or admin/auditor read" ON user_feedback FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
 CREATE POLICY "Feedback - own data write" ON user_feedback FOR INSERT WITH CHECK (auth.uid() = user_id AND get_my_role() IN ('admin', 'premium', 'user'));
 
 -- telemetry
 DROP POLICY IF EXISTS "Tenant isolation - Telemetry" ON telemetry;
+DROP POLICY IF EXISTS "Telemetry - own data or admin/auditor read" ON telemetry;
+DROP POLICY IF EXISTS "Telemetry - system write" ON telemetry;
 CREATE POLICY "Telemetry - own data or admin/auditor read" ON telemetry FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
 CREATE POLICY "Telemetry - system write" ON telemetry FOR INSERT WITH CHECK (auth.uid() = user_id OR get_my_role() = 'admin');
 
 -- ai_inference_logs
 DROP POLICY IF EXISTS "Tenant isolation - AI Inference Logs" ON ai_inference_logs;
+DROP POLICY IF EXISTS "AI Logs - own data or admin/auditor read" ON ai_inference_logs;
+DROP POLICY IF EXISTS "AI Logs - system write" ON ai_inference_logs;
 CREATE POLICY "AI Logs - own data or admin/auditor read" ON ai_inference_logs FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
 CREATE POLICY "AI Logs - system write" ON ai_inference_logs FOR INSERT WITH CHECK (auth.uid() = user_id OR get_my_role() = 'admin');
 
 -- data_compliance_metadata
 DROP POLICY IF EXISTS "Tenant isolation - Data Compliance" ON data_compliance_metadata;
+DROP POLICY IF EXISTS "Compliance - own data or admin/auditor read" ON data_compliance_metadata;
+DROP POLICY IF EXISTS "Compliance - own data write" ON data_compliance_metadata;
+DROP POLICY IF EXISTS "Compliance - own data update" ON data_compliance_metadata;
 CREATE POLICY "Compliance - own data or admin/auditor read" ON data_compliance_metadata FOR SELECT USING (
     EXISTS (SELECT 1 FROM articles WHERE id = article_id AND (user_id = auth.uid() OR get_my_role() IN ('admin', 'auditor')))
 );
@@ -554,6 +586,9 @@ CREATE POLICY "Compliance - own data update" ON data_compliance_metadata FOR UPD
 
 -- bias_safety_reports
 DROP POLICY IF EXISTS "Tenant isolation - Bias Safety Reports" ON bias_safety_reports;
+DROP POLICY IF EXISTS "Reports - own data or admin/auditor read" ON bias_safety_reports;
+DROP POLICY IF EXISTS "Reports - own data write" ON bias_safety_reports;
+DROP POLICY IF EXISTS "Reports - own data update" ON bias_safety_reports;
 CREATE POLICY "Reports - own data or admin/auditor read" ON bias_safety_reports FOR SELECT USING (auth.uid() = user_id OR get_my_role() IN ('admin', 'auditor'));
 CREATE POLICY "Reports - own data write" ON bias_safety_reports FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Reports - own data update" ON bias_safety_reports FOR UPDATE USING (auth.uid() = user_id OR get_my_role() = 'admin');
