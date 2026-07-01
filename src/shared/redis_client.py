@@ -131,9 +131,12 @@ def _parse_and_clean_redis_stream(result, group_name: str) -> List[Dict[str, Any
             redis.execute(command=["XACK", STREAM_RAW, group_name, msg_id])
             continue
 
-        fields = {
-            fields_list[i]: fields_list[i + 1] for i in range(0, len(fields_list), 2)
-        }
+        if isinstance(fields_list, dict):
+            fields = fields_list
+        else:
+            fields = {
+                fields_list[i]: fields_list[i + 1] for i in range(0, len(fields_list), 2)
+            }
         parsed.append({"id": msg_id, "data": fields})
     return parsed
 
