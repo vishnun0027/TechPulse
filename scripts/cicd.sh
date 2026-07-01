@@ -62,8 +62,8 @@ if [ "$RUN_CD" = true ]; then
 
     echo "--- Reloading systemd and restarting timers ---"
     systemctl --user daemon-reload
-    systemctl --user enable techpulse-collector.timer techpulse-pulse.timer techpulse-archive.timer techpulse-keepalive.timer
-    systemctl --user restart techpulse-collector.timer techpulse-pulse.timer techpulse-archive.timer techpulse-keepalive.timer
+    systemctl --user enable techpulse-collector.timer techpulse-pulse.timer techpulse-archive.timer techpulse-keepalive.timer techpulse-api.service
+    systemctl --user restart techpulse-collector.timer techpulse-pulse.timer techpulse-archive.timer techpulse-keepalive.timer techpulse-api.service
 
     echo "--- Verifying timer statuses ---"
     sleep 2

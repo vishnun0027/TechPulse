@@ -1,0 +1,14 @@
+[Unit]
+Description=TechPulse API Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/vishnu/worklab/techpulse
+ExecStart=/home/vishnu/.local/bin/uv run uvicorn api.main:app --host 127.0.0.1 --port 8089
+Restart=always
+RestartSec=5
+Environment=PYTHONPATH=src
+
+[Install]
+WantedBy=default.target
