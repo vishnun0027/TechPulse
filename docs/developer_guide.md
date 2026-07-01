@@ -26,6 +26,7 @@ The collector runs concurrently across all active RSS sources listed in the `rss
 - **Freshness**: Uses a strict publication date cutoff.
 - **Deduplication**: Uses Redis for fast URL and title-slug hashing (`seen:{user_id}:{hash}`).
 - **Source Health**: Captures metrics on ingestion vs delivery to auto-downgrade noisy feeds.
+- **Domain Throttling**: Automatically spaces out fetches to the same domain using a 2-second rate-limiting delay (`asyncio.Lock`) to prevent target server IP bans.
 
 ### 2. The Enrichment Engine (`Enricher`)
 - **Embeddings**: Uses `sentence-transformers/all-mpnet-base-v2` (768-dim) for high-accuracy semantic representation.
@@ -34,9 +35,13 @@ The collector runs concurrently across all active RSS sources listed in the `rss
 - **Novelty Scoring**: Calculates uniqueness against the user's historical feed using a recency-weighted similarity decay.
 
 ### 3. The Decide & Research Pipeline (`Ranker` & `Research Agent`)
-- **Scoring**: A weighted additive formula (Signals: Base LLM, Novelty, Source Quality, Topic Match, Priority Boost).
-- **Feedback Loop**: A dedicated processing service aggregates user signals (`clicked`, `dismissed`, `saved`) to update source quality scores in real-time.
-- **Research Agent**: A LangGraph node that retrieves historical user context from pgvector to synthesize a summary and extract the "Why It Matters" takeaway.
+- **Scoring & Personalization**: A weighted additive formula incorporating base LLM relevance, novelty, source health, keyword matching, and **15% semantic personalization** (cosine similarity against liked/disliked vector centroids).
+- **Feedback Loop**: A dedicated processing service aggregates user clicks and action signals (`clicked`, `dismissed`, `saved`, `more_like_this`, `less_like_this`) to dynamically update both source quality scores and user interests.
+- **Research Agent**: A LangGraph graph executing:
+  1. Historical RAG context retrieval (`pgvector`).
+  2. Web search context collection (`Tavily API`).
+  3. Context-enhanced summarization (`qwen/qwen3-32b`).
+  4. Factual verification check to audit and log hallucinations (`llama-3.1-8b-instant`).
 
 ### 4. Distribution & Curation (`Composer` & `Delivery`)
 - **Dynamic Theming**: The Composer Agent assigns dynamic thematic groupings (e.g. "Generative AI", "Developer Tools") replacing hardcoded taxonomies.
@@ -53,7 +58,7 @@ TechPulse Pro uses **Supabase Row Level Security (RLS)** to ensure data isolatio
 | `articles` | `auth.uid() = user_id` | Users can only see/delete their own news. |
 | `app_config` | `auth.uid() = user_id` | Topic settings are private per user. |
 | `rss_sources` | `auth.uid() = user_id` | Sources are isolated per tenant. |
-| `tenant_profiles` | `auth.uid() = user_id` | Tenant profiles and webhook configurations are isolated. |
+| `tenant_profiles` | `auth.uid() = user_id` | Tenant profiles are isolated. Webhooks are symmetrically encrypted via `pgcrypto`. |
 
 ### CLI Tool Contexts:
 - **`pulse` (Unified)**: Handles both user-facing queries (using the user's Supabase JWT) and system operator tasks (like pipeline runs and tenant management using the service-role client).
@@ -63,6 +68,7 @@ TechPulse Pro uses **Supabase Row Level Security (RLS)** to ensure data isolatio
 ## 🌐 REST API Router
 
 FastAPI server exposing pipeline triggers, user statistics, configuration updates, and interactive cited semantic search. All endpoints require `X-User-Id` request header validations for tenant isolation.
+A Redis-backed rate-limiting middleware limits public requests on the `/click` and `/action` endpoints to a maximum of **30 requests per minute per IP**.
 
 ### Endpoints:
 *   `GET /health`: System health status (public).
@@ -72,8 +78,19 @@ FastAPI server exposing pipeline triggers, user statistics, configuration update
 *   `PATCH /sources/{id}/toggle`: Toggle active/inactive status of an RSS source.
 *   `GET /articles/`: Fetch AI-curated digests scored above delivery threshold.
 *   `POST /articles/{id}/feedback`: Log click/dismiss/save signals.
+*   `GET /articles/{id}/click`: Click-redirect endpoint to track user clicks.
+*   `GET /articles/{id}/action`: Log thumbs up/down feedback directly via chat action buttons.
 *   `POST /pipeline/run`: Manually trigger background ingestion and delivery pipeline.
 *   `POST /search/rag`: Query personal catalog via LangGraph-orchestrated cited RAG.
+
+---
+
+## ⚙️ Operations & Cloudflare Tunnel Deployment
+
+In production, the API server runs locally on the VM (via `techpulse-api.service` systemd daemon on port `8089`). It is exposed securely to the internet without open ports using a **Cloudflare Tunnel** (`cloudflared`):
+1. Routes requests to `https://pulse-api.nullnex.com`.
+2. Hides the VM's public IP address entirely.
+3. Automatically provides and renews edge SSL/HTTPS certificates.
 
 ---
 

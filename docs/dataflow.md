@@ -320,25 +320,28 @@ signals = RankSignals(
     novelty_score  = novelty_score,              # 0–1
     source_quality = quality,                    # 0–1
     topic_match    = topic_match,                # 0–1
-    priority_boost = 1.0 if has_priority else 0.0
+    priority_boost = 1.0 if has_priority else 0.0,
+    semantic_interest_score = interest_score     # -1.0 to 1.0 (cosine similarity against liked/disliked user centroids)
 )
 
-score = (base_relevance × 0.35)
-      + (novelty_score  × 0.25 × 10)
-      + (source_quality × 0.20 × 10)
+score = (base_relevance × 0.30)
+      + (novelty_score  × 0.20 × 10)
+      + (source_quality × 0.15 × 10)
       + (topic_match    × 0.15 × 10)
       + (priority_boost × 0.05 × 10)
+      + (semantic_interest_score × 0.15 × 10)
 
 final_score = min(score, 10.0)
 ```
 
 | Signal | Weight | Max pts |
 |---|---|---|
-| `base_relevance` (LLM, 0–10) | 35% | 3.5 |
-| `novelty_score` (0–1) | 25% | 2.5 |
-| `source_quality` (0–1) | 20% | 2.0 |
+| `base_relevance` (LLM, 0–10) | 30% | 3.0 |
+| `novelty_score` (0–1) | 20% | 2.0 |
+| `source_quality` (0–1) | 15% | 1.5 |
 | `topic_match` (0–1) | 15% | 1.5 |
 | `priority_boost` (0 or 1) | 5% | 0.5 |
+| `semantic_interest_score` (-1 to 1) | 15% | 1.5 |
 | **Total** | | **10.0** |
 
 ---
@@ -364,7 +367,7 @@ This is the **most important cost-saving gate**. The expensive Research Agent LL
 ### 8.1 Graph Topology
 
 ```
-EntryPoint → [retrieve_history] → [build_summary] → END
+EntryPoint → [retrieve_history] → [web_search] → [build_summary] → [verify_facts] → END
 ```
 
 State type: `ResearchState` (TypedDict):
@@ -372,7 +375,8 @@ State type: `ResearchState` (TypedDict):
 {
   article_text, article_title, user_id, embedding,   # inputs
   similar_history,                                    # set by Node 1
-  web_context, summary, why_it_matters, topics        # set by Node 2
+  web_context,                                        # set by Node 1.5 (Tavily search context)
+  summary, why_it_matters, topics                     # set by Node 2
 }
 ```
 
@@ -392,22 +396,31 @@ supabase.rpc("match_articles", {
 - Returns: title, published_at, summary, why_it_matters per match
 - Retried up to 3× with exponential backoff (tenacity)
 
+### 8.2.5 Node 1.5: `web_search`
+
+- Runs only if `enable_web_search` and `tavily_api_key` are configured.
+- Queries the Tavily Search API for technical details and context based on the article's title.
+- Retrieves up to 2 snippets and populates the `web_context` field.
+
 ### 8.3 Node 2: `build_summary`
 
-**Model:** `llama-3.3-70b-versatile` (Groq), temperature=0.1
+**Model:** `qwen/qwen3-32b` (configured research model), temperature=0.1
 
-**Historical context assembled as:**
+**Historical coverage & search context assembled as:**
 ```
+HISTORICAL COVERAGE:
 - [2026-04-28] Prior Article Title: prior why_it_matters text (max 120 chars)
-- [2026-04-25] Another Article: ...
+
+WEB SEARCH CONTEXT:
+- Snippet title: Content snippet from Tavily search
 ```
 
 **Prompt:**
 ```
-SYSTEM: You are a precise tech analyst. Summarize articles with historical context.
+SYSTEM: You are a precise tech analyst. Summarize articles with historical coverage and web context.
         {format_instructions}   ← ArticleAnalysis JSON schema
 
-HUMAN: {article_title}\n{article_text[:4000]}
+HUMAN: HISTORICAL COVERAGE:\n{history_context}\n\nWEB SEARCH CONTEXT:\n{web_context}\n\nARTICLE:\n{title}\n{text}
 ```
 
 **Output** (parsed via `JsonOutputParser` → `ArticleAnalysis` Pydantic model):
@@ -420,10 +433,12 @@ HUMAN: {article_title}\n{article_text[:4000]}
 }
 ```
 
-**Retry strategy:** `@retry_llm_call(max_attempts=3)` wraps the LLM call. On failure, falls back to:
-- `summary` = first 200 chars of article text
-- `why_it_matters` = "Error in analysis."
-- `topics` = []
+**Retry strategy:** `@retry_llm_call(max_attempts=3)` wraps the LLM call. On failure, falls back to raw text snippets.
+
+### 8.3.5 Node 3: `verify_facts`
+
+- Uses `llama-3.1-8b-instant` to check the generated summary and "why it matters" against the raw article source text.
+- If it detects hallucinated assertions or claims not in the source text, it logs the warning and appends a notice to the summary's delivery payload.
 
 ---
 
@@ -741,6 +756,7 @@ class RankSignals:
     source_quality: float   # 0–1: from source_health table
     topic_match:    float   # 0–1: Jaccard or heuristic
     priority_boost: float   # 1.0 or 0.0: priority topic match
+    semantic_interest_score: float # -1.0 to 1.0: vector similarity difference against user interest centroids
 ```
 
 ### `ResearchState` (TypedDict — `agents/research_agent.py`)
