@@ -5,14 +5,21 @@ from api.main import app
 client = TestClient(app)
 TEST_USER_ID = "ab05c507-fd62-44c4-80de-c1b2ae4f0bf2"
 
-def test_health():
+@patch("api.main.ping_redis", return_value=True)
+@patch("api.main.supabase")
+def test_health(mock_supabase, mock_ping_redis):
+    # Mock Supabase table select count execution
+    mock_execute = MagicMock()
+    mock_execute.execute.return_value.data = []
+    mock_supabase.table.return_value.select.return_value.limit.return_value = mock_execute
+
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
     assert data["service"] == "techpulse-api"
-    assert "redis" in data
-    assert "supabase" in data
+    assert data["redis"] == "healthy"
+    assert data["supabase"] == "healthy"
 
 @patch("api.routes.articles.supabase")
 def test_get_articles(mock_supabase):
