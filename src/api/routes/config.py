@@ -3,6 +3,7 @@ from typing import List
 from shared.db import supabase
 from api.deps import get_current_user_id
 from pydantic import BaseModel
+from loguru import logger
 
 router = APIRouter()
 
@@ -14,10 +15,14 @@ class ConfigUpdate(BaseModel):
 @router.get("/")
 def get_config(user_id: str = Depends(get_current_user_id)):
     """Fetches the interest filter configuration for the current user."""
-    res = supabase.table("app_config").select("value").eq("key", "topics").eq("user_id", user_id).execute()
-    if not res.data:
-        return {"allowed": [], "blocked": [], "priority": []}
-    return res.data[0]["value"]
+    try:
+        res = supabase.table("app_config").select("value").eq("key", "topics").eq("user_id", user_id).execute()
+        if not res.data:
+            return {"allowed": [], "blocked": [], "priority": []}
+        return res.data[0]["value"]
+    except Exception as e:
+        logger.error(f"Failed to fetch config for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch configuration.")
 
 @router.put("/")
 def update_config(
@@ -37,7 +42,8 @@ def update_config(
         res = supabase.table("app_config").upsert(data, on_conflict="user_id,key").execute()
         return {"status": "success", "config": res.data[0]["value"]}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update config: {str(e)}")
+        logger.error(f"Failed to update config for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update configuration.")
 
 @router.get("/stats")
 def get_user_stats(user_id: str = Depends(get_current_user_id)):

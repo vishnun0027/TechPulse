@@ -13,6 +13,7 @@ from shared.redis_client import (
 )
 from shared.db import save_article, log_telemetry, get_filter_config, log_ai_inference
 from shared.models import ArticleAnalysis
+from shared.dlp import dlp_scan_and_scrub
 
 
 # Shared models are now used for structured output schema
@@ -214,6 +215,10 @@ async def process_message(
         user_id = d.get("user_id")
 
         try:
+            # DLP: Scrub PII from raw content before it goes to any filter, LLM, or DB
+            d["title"] = dlp_scan_and_scrub(d.get("title", ""), "title", user_id).scrubbed_text
+            d["content"] = dlp_scan_and_scrub(d.get("content", ""), "content", user_id).scrubbed_text
+
             loop = asyncio.get_running_loop()
             config = await loop.run_in_executor(None, get_filter_config, user_id)
 
@@ -252,6 +257,16 @@ async def process_message(
 
         except Exception as e:
             logger.error(f"Summarize failed for message {msg_id}: {e}")
+            try:
+                from shared.redis_client import move_to_dlq, get_retry_count
+                retries = get_retry_count(msg_id)
+                if retries > 3:
+                    logger.error(f"DLQ: Summarizer message {msg_id} failed {retries} times. Moving to DLQ.")
+                    move_to_dlq(msg_id, d, str(e))
+                else:
+                    logger.warning(f"Retry {retries}/3 for message {msg_id}")
+            except Exception as re:
+                logger.error(f"Failed to handle DLQ process in summarizer: {re}")
             await asyncio.sleep(3)
             return None
 

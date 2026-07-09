@@ -17,3 +17,8 @@ scratch/
 
 # VS Code workspace files
 techpulse-ai.code-workspace
+
+# Private keys and secrets
+*.pem
+*.key
+secrets/

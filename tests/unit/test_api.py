@@ -8,7 +8,11 @@ TEST_USER_ID = "ab05c507-fd62-44c4-80de-c1b2ae4f0bf2"
 def test_health():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "healthy", "service": "techpulse-api"}
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert data["service"] == "techpulse-api"
+    assert "redis" in data
+    assert "supabase" in data
 
 @patch("api.routes.articles.supabase")
 def test_get_articles(mock_supabase):
@@ -161,8 +165,9 @@ def test_get_user_stats(mock_supabase):
     # Since we are mocking table calls, we verify it executes successfully
     assert response.status_code == 200
 
+@patch("api.routes.pipeline.get_tenant_role", return_value="admin")
 @patch("api.routes.pipeline.run_all_async")
-def test_trigger_pipeline(mock_run_all_async):
+def test_trigger_pipeline(mock_run_all_async, mock_get_role):
     headers = {"X-User-Id": TEST_USER_ID}
     response = client.post("/pipeline/run", headers=headers)
     assert response.status_code == 200

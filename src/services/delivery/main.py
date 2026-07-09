@@ -1,5 +1,7 @@
 import httpx
 import urllib.parse
+import hmac
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from collections import defaultdict
@@ -13,6 +15,7 @@ from shared.db import (
     update_source_delivery,
 )
 from shared.redis_client import redis, STREAM_RAW
+from shared.dlp import dlp_scan_and_scrub
 
 # Theme Configuration is now handled dynamically by the AI in the Summarizer stage.
 
@@ -66,21 +69,30 @@ def _build_slack_article_blocks(grouped_articles: Dict[str, List[Dict[str, Any]]
             {"type": "section", "text": {"type": "mrkdwn", "text": f"*{theme}*"}}
         )
         for a in articles:
-            s_title = (a.get("title", "") or "")[:120]
-            s_summary = (a.get("summary", "") or "")[:250]
-            s_insight = (a.get("why_it_matters", "") or "")[:150]
+            # Output-side DLP: Scrub any accidentally leaked PII before sending to Slack
+            s_title = dlp_scan_and_scrub(a.get("title", "") or "", "slack_title", user_id).scrubbed_text[:120]
+            s_summary = dlp_scan_and_scrub(a.get("summary", "") or "", "slack_summary", user_id).scrubbed_text[:250]
+            s_insight = dlp_scan_and_scrub(a.get("why_it_matters", "") or "", "slack_insight", user_id).scrubbed_text[:150]
             s_url = a.get("source_url", "#")
             s_score = a.get("score", 0)
             a_id = a.get("id", "")
 
             # Redirect link tracking
             encoded_url = urllib.parse.quote(s_url)
-            click_url = f"{settings.api_base_url}/articles/{a_id}/click?user_id={user_id}&redirect={encoded_url}"
+            secret = settings.jwt_secret or settings.encryption_key
+            click_msg = f"click:{a_id}:{user_id}:{s_url}".encode("utf-8")
+            click_token = hmac.new(secret.encode("utf-8"), click_msg, hashlib.sha256).hexdigest()
+            click_url = f"{settings.api_base_url}/articles/{a_id}/click?user_id={user_id}&redirect={encoded_url}&token={click_token}"
 
             # Feedback action links
-            like_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=more_like_this"
-            dislike_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=less_like_this"
-            save_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=saved"
+            def make_action_url(sig: str) -> str:
+                msg = f"action:{a_id}:{user_id}:{sig}".encode("utf-8")
+                tok = hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+                return f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal={sig}&token={tok}"
+
+            like_url = make_action_url("more_like_this")
+            dislike_url = make_action_url("less_like_this")
+            save_url = make_action_url("saved")
 
             actions_mrkdwn = f"[ <{like_url}|👍 Like> | <{dislike_url}|👎 Dislike> | <{save_url}|📌 Save> ]"
             narrative = f"_{s_summary}_\n> {actions_mrkdwn}"
@@ -175,25 +187,38 @@ def discord_payload_chunks(
             current += theme_header
 
         for i, a in enumerate(articles, 1):
+            # Output-side DLP: Scrub any accidentally leaked PII before sending to Discord
+            scrubbed_title = dlp_scan_and_scrub(a.get("title", "") or "", "discord_title", user_id).scrubbed_text
+            scrubbed_summary = dlp_scan_and_scrub(a.get("summary", "") or "", "discord_summary", user_id).scrubbed_text
+            scrubbed_insight = dlp_scan_and_scrub(a.get("why_it_matters", "") or "", "discord_insight", user_id).scrubbed_text
+
             insight = (
-                f"\n> **Insight:** {a['why_it_matters']}"
-                if a.get("why_it_matters")
+                f"\n> **Insight:** {scrubbed_insight}"
+                if scrubbed_insight
                 else ""
             )
             a_id = a.get("id", "")
             orig_url = a.get("source_url", "#")
             encoded_url = urllib.parse.quote(orig_url)
-            click_url = f"{settings.api_base_url}/articles/{a_id}/click?user_id={user_id}&redirect={encoded_url}"
+            secret = settings.jwt_secret or settings.encryption_key
+            click_msg = f"click:{a_id}:{user_id}:{orig_url}".encode("utf-8")
+            click_token = hmac.new(secret.encode("utf-8"), click_msg, hashlib.sha256).hexdigest()
+            click_url = f"{settings.api_base_url}/articles/{a_id}/click?user_id={user_id}&redirect={encoded_url}&token={click_token}"
 
-            like_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=more_like_this"
-            dislike_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=less_like_this"
-            save_url = f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal=saved"
+            def make_action_url(sig: str) -> str:
+                msg = f"action:{a_id}:{user_id}:{sig}".encode("utf-8")
+                tok = hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+                return f"{settings.api_base_url}/articles/{a_id}/action?user_id={user_id}&signal={sig}&token={tok}"
+
+            like_url = make_action_url("more_like_this")
+            dislike_url = make_action_url("less_like_this")
+            save_url = make_action_url("saved")
 
             actions = f"[👍 Like]({like_url}) | [👎 Dislike]({dislike_url}) | [📌 Save]({save_url})"
 
             entry = (
-                f"**{i}. [{a['title']}](<{click_url}>)** (Score: {a['score']})\n"
-                f"> {a['summary']}{insight}\n"
+                f"**{i}. [{scrubbed_title}](<{click_url}>)** (Score: {a['score']})\n"
+                f"> {scrubbed_summary}{insight}\n"
                 f"> Actions: {actions}\n\n"
             )
             if len(current) + len(entry) > 1900:

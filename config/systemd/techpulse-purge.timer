@@ -1,0 +1,9 @@
+[Unit]
+Description=Run TechPulse Weekly Data Purging on Sunday
+
+[Timer]
+OnCalendar=Sun *-*-* 01:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

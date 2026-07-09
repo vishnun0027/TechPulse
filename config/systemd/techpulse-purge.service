@@ -1,0 +1,9 @@
+[Unit]
+Description=TechPulse Weekly Purge & Retention Service
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/vishnu/worklab/techpulse
+EnvironmentFile=/home/vishnu/worklab/techpulse/.env
+ExecStart=/home/vishnu/.local/bin/uv run pulse run purge --days 90

@@ -5,6 +5,7 @@ from api.deps import get_current_user_id
 from shared.db import supabase
 from shared.config import settings
 from services.agents.rag_agent import build_rag_agent
+from loguru import logger
 
 
 router = APIRouter()
@@ -80,7 +81,8 @@ def perform_rag_search(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"RAG search execution failed for user {user_id}: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"RAG search execution failed: {str(e)}"
+            detail="RAG search execution failed."
         )

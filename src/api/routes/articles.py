@@ -2,9 +2,13 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
 import urllib.parse
 from typing import List, Optional
+import hmac
+import hashlib
 from shared.db import supabase
+from shared.config import settings
 from api.deps import get_current_user_id
 from pydantic import BaseModel
+from loguru import logger
 
 router = APIRouter()
 
@@ -32,20 +36,24 @@ def get_articles(
     is_delivered: Optional[bool] = None,
 ):
     """Fetches curated articles for the current user."""
-    query = (
-        supabase.table("articles")
-        .select("*")
-        .eq("user_id", user_id)
-        .gte("score", min_score)
-        .order("score", desc=True)
-        .range(offset, offset + limit - 1)
-    )
+    try:
+        query = (
+            supabase.table("articles")
+            .select("*")
+            .eq("user_id", user_id)
+            .gte("score", min_score)
+            .order("score", desc=True)
+            .range(offset, offset + limit - 1)
+        )
 
-    if is_delivered is not None:
-        query = query.eq("is_delivered", is_delivered)
+        if is_delivered is not None:
+            query = query.eq("is_delivered", is_delivered)
 
-    res = query.execute()
-    return res.data or []
+        res = query.execute()
+        return res.data or []
+    except Exception as e:
+        logger.error(f"Error fetching articles: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch articles.")
 
 
 @router.post("/{article_id}/feedback")
@@ -55,20 +63,23 @@ def submit_feedback(
     user_id: str = Depends(get_current_user_id),
 ):
     """Submits user feedback for an article to power the feedback loop."""
-    # Verify article exists and belongs to user (optional but recommended)
-    check = supabase.table("articles").select("id").eq("id", article_id).eq("user_id", user_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Article not found or access denied.")
-
     try:
+        # Verify article exists and belongs to user
+        check = supabase.table("articles").select("id").eq("id", article_id).eq("user_id", user_id).execute()
+        if not check.data:
+            raise HTTPException(status_code=404, detail="Article not found or access denied.")
+
         supabase.table("user_feedback").insert({
             "article_id": article_id,
             "user_id": user_id,
             "signal": request.signal
         }).execute()
-        return {"status": "success", "message": f"Feedback '{request.signal}' recorded."}
+        return {"status": "success", "message": f"Feedback recorded."}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to record feedback: {str(e)}")
+        logger.error(f"Failed to record feedback for article {article_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to record feedback.")
 
 
 @router.get("/{article_id}/click")
@@ -76,10 +87,40 @@ def redirect_article(
     article_id: str,
     user_id: str,
     redirect: str,
+    token: str,
 ):
     """
     Logs a 'clicked' feedback event for an article, then redirects to the original URL.
+    Validates the click action using a signed HMAC token to prevent tampering and open redirects.
     """
+    secret = settings.jwt_secret or settings.encryption_key
+    if not secret:
+        logger.error("Signing secret is not configured")
+        raise HTTPException(status_code=500, detail="Internal server error.")
+
+    # Validate HMAC signature to prevent parameter tampering
+    expected_msg = f"click:{article_id}:{user_id}:{redirect}".encode("utf-8")
+    expected_token = hmac.new(secret.encode("utf-8"), expected_msg, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(token, expected_token):
+        logger.warning(f"Invalid click token signature for article {article_id}")
+        raise HTTPException(status_code=403, detail="Forbidden: Invalid click token.")
+
+    # Parse and validate target URL to prevent SSRF and Open Redirect to internal networks
+    target_url = urllib.parse.unquote(redirect)
+    parsed_url = urllib.parse.urlparse(target_url)
+
+    if parsed_url.scheme not in ("http", "https"):
+        logger.warning(f"Rejected click redirect to invalid scheme: {parsed_url.scheme}")
+        raise HTTPException(status_code=400, detail="Invalid redirect URL scheme.")
+
+    BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254"}
+    hostname = parsed_url.hostname
+    if hostname:
+        hostname_lower = hostname.lower()
+        if hostname_lower in BLOCKED_HOSTS or hostname_lower.endswith(".internal"):
+            logger.warning(f"Rejected click redirect to blocked/internal host: {hostname}")
+            raise HTTPException(status_code=400, detail="Redirect to internal hosts is not allowed.")
+
     try:
         # Log feedback
         supabase.table("user_feedback").insert({
@@ -96,10 +137,8 @@ def redirect_article(
                 {"p_source_id": article_res.data["source_id"], "p_user_id": user_id}
             ).execute()
     except Exception as e:
-        from loguru import logger
         logger.error(f"Error logging click telemetry: {e}")
 
-    target_url = urllib.parse.unquote(redirect)
     return RedirectResponse(url=target_url)
 
 
@@ -108,11 +147,51 @@ def submit_chat_action(
     article_id: str,
     user_id: str,
     signal: str,
+    token: str,
 ):
     """
     Records direct article feedback (saved, dismissed, more_like_this, less_like_this)
     via public action links, returning a clean feedback confirmation page.
+    Requires a valid HMAC token to verify origin.
     """
+    secret = settings.jwt_secret or settings.encryption_key
+    if not secret:
+        logger.error("Signing secret is not configured")
+        return HTMLResponse(
+            status_code=500,
+            content="""
+            <html>
+                <head><title>Error</title></head>
+                <body style="font-family: sans-serif; background-color: #0d1117; color: #ff7b72; display: flex; justify-content: center; align-items: center; height: 100vh;">
+                    <div style="text-align: center; border: 1px solid #ff7b72; padding: 40px; border-radius: 8px; background-color: #161b22;">
+                        <h1>⚠️ Configuration Error</h1>
+                        <p>Server signing secret is not configured.</p>
+                    </div>
+                </body>
+            </html>
+            """
+        )
+
+    # Validate HMAC signature
+    expected_msg = f"action:{article_id}:{user_id}:{signal}".encode("utf-8")
+    expected_token = hmac.new(secret.encode("utf-8"), expected_msg, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(token, expected_token):
+        logger.warning(f"Invalid action token signature for feedback on article {article_id}")
+        return HTMLResponse(
+            status_code=403,
+            content="""
+            <html>
+                <head><title>Forbidden</title></head>
+                <body style="font-family: sans-serif; background-color: #0d1117; color: #ff7b72; display: flex; justify-content: center; align-items: center; height: 100vh;">
+                    <div style="text-align: center; border: 1px solid #ff7b72; padding: 40px; border-radius: 8px; background-color: #161b22;">
+                        <h1>⚠️ Access Denied</h1>
+                        <p>Invalid or expired feedback token.</p>
+                    </div>
+                </body>
+            </html>
+            """
+        )
+
     signal_mappings = {
         "more_like_this": "Liked",
         "less_like_this": "Disliked",
@@ -128,23 +207,16 @@ def submit_chat_action(
             "signal": signal
         }).execute()
     except Exception as e:
-        from loguru import logger
         logger.error(f"Error saving feedback: {e}")
         return HTMLResponse(
             status_code=500,
-            content=f"""
+            content="""
             <html>
-                <head>
-                    <title>Error</title>
-                    <style>
-                        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #0d1117; color: #ff7b72; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }}
-                        .container {{ text-align: center; border: 1px solid #ff7b72; padding: 40px; border-radius: 8px; background-color: #161b22; max-width: 400px; }}
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
+                <head><title>Error</title></head>
+                <body style="font-family: sans-serif; background-color: #0d1117; color: #ff7b72; display: flex; justify-content: center; align-items: center; height: 100vh;">
+                    <div style="text-align: center; border: 1px solid #ff7b72; padding: 40px; border-radius: 8px; background-color: #161b22;">
                         <h1>⚠️ Failure</h1>
-                        <p>Could not save feedback: {str(e)}</p>
+                        <p>Could not save feedback. Please try again later.</p>
                     </div>
                 </body>
             </html>
@@ -225,3 +297,4 @@ def submit_chat_action(
         </html>
         """
     )
+

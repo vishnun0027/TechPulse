@@ -13,6 +13,7 @@ import time
 import json
 import httpx
 from shared.db import log_ai_inference
+from shared.dlp import dlp_scan_and_scrub
 
 
 class ResearchState(TypedDict):
@@ -80,13 +81,14 @@ def web_search(state: ResearchState) -> ResearchState:
                 f"- {r.get('title')}: {r.get('content')} ({r.get('url')})"
                 for r in results
             ]
-            state["web_context"] = "\n".join(snippets)
-            logger.info(f"Tavily search retrieved {len(results)} context snippets.")
+            raw_context = "\n".join(snippets)
+            state["web_context"] = dlp_scan_and_scrub(raw_context, "web_context", state.get("user_id")).scrubbed_text
+            logger.info(f"Tavily search retrieved {len(results)} context snippets (DLP scrubbed).")
         else:
             state["web_context"] = "Search returned no results."
     except Exception as e:
         logger.error(f"Tavily search context query failed: {e}")
-        state["web_context"] = f"Search query failed: {e}"
+        state["web_context"] = f"Search query failed."
 
     return state
 

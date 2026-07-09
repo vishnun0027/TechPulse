@@ -62,8 +62,8 @@ if [ "$RUN_CD" = true ]; then
 
     echo "--- Reloading systemd and restarting timers ---"
     systemctl --user daemon-reload
-    systemctl --user enable techpulse-collector.timer techpulse-pulse.timer techpulse-archive.timer techpulse-keepalive.timer techpulse-api.service
-    systemctl --user restart techpulse-collector.timer techpulse-pulse.timer techpulse-archive.timer techpulse-keepalive.timer techpulse-api.service
+    systemctl --user enable techpulse-collector.timer techpulse-pulse.timer techpulse-archive.timer techpulse-keepalive.timer techpulse-purge.timer techpulse-api.service
+    systemctl --user restart techpulse-collector.timer techpulse-pulse.timer techpulse-archive.timer techpulse-keepalive.timer techpulse-purge.timer techpulse-api.service
 
     echo "--- Verifying timer statuses ---"
     sleep 2
@@ -87,6 +87,11 @@ if [ "$RUN_CD" = true ]; then
     systemctl --user is-active --quiet techpulse-keepalive.timer \
       && echo "✅ techpulse-keepalive.timer is active" \
       || (echo "❌ techpulse-keepalive.timer is NOT active" && exit 1)
+
+    # Check purge timer
+    systemctl --user is-active --quiet techpulse-purge.timer \
+      && echo "✅ techpulse-purge.timer is active" \
+      || (echo "❌ techpulse-purge.timer is NOT active" && exit 1)
 
     echo "🎉 CD Deployment completed successfully!"
 fi

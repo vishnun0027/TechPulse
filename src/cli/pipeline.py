@@ -32,7 +32,8 @@ def _compute_topic_match(article_topics: list[str], user_allowed: list[str]) -> 
     return round(len(matches) / len(union), 4) if union else 0.5
 
 
-USER_CENTROIDS_CACHE = {}
+from cachetools import TTLCache
+USER_CENTROIDS_CACHE = TTLCache(maxsize=128, ttl=600)  # 10 minutes TTL
 
 
 def get_cached_user_centroids(user_id: str) -> tuple[Any, Any]:
@@ -85,61 +86,60 @@ def _triage_article(title: str, content: str, config: Dict[str, Any], user_id: s
     return True
 
 
-async def _rank_article(
-    db: Any,
-    h_score: float,
-    novelty_score: float,
-    quality: float,
-    title: str,
-    content: str,
-    source: str,
-    config: Dict[str, Any],
-    user_id: str,
-    embedding: list[float]
-) -> tuple[float, List[str]]:
-    allowed_topics = config.get("allowed", [])
-    blocked_topics = config.get("blocked", [])
-    priority_topics = {t.lower() for t in config.get("priority", [])}
-    ai_topics = []
-
-    final_score = h_score
-    # Only refine if it's within the borderline range.
-    if 3.0 <= h_score <= 7.5:
-        rprint(f"[cyan]Refining article with AI ({h_score}): {title[:40]}...[/cyan]")
-        analysis = await summarizer_main.call_groq_async(title, content, source, allowed_topics, user_id=user_id)
-        ai_topics = analysis.topics
-        interest_score = compute_semantic_interest_score(embedding, user_id)
-        final_score = scorer.compute_final_score(scorer.RankSignals(
-            base_relevance=analysis.score,
-            novelty_score=novelty_score,
-            source_quality=quality,
-            topic_match=_compute_topic_match(ai_topics, allowed_topics),
-            priority_boost=1.0 if any(t.lower() in priority_topics for t in ai_topics) else 0.0,
-            semantic_interest_score=interest_score,
-            is_blocked=any(t.lower() in {b.lower() for b in blocked_topics} for t in ai_topics),
-        ))
-    return final_score, ai_topics
-
-
 async def _research_and_persist_article(
     loop: Any, agent: Any, content: str, title: str, user_id: str,
-    embedding: list[float], source: str, url: str, final_score: float,
-    msg_id: str, article: dict, novelty_score: float, event_id: str, ai_topics: List[str],
-    classification: str, pii_scan_status: str, pii_entities_found: List[str]
+    embedding: list[float], source: str, url: str, heuristic_score: float,
+    msg_id: str, article: dict, novelty_score: float, event_id: str,
+    classification: str, pii_scan_status: str, pii_entities_found: List[str],
+    config: Dict[str, Any], quality: float, interest_score: float
 ) -> bool:
     result = await loop.run_in_executor(None, agent.invoke, {
         "article_text": content, "article_title": title, "user_id": user_id, "embedding": embedding
     })
     if result.get("research_failed"):
         rprint(f"[red]RESEARCH FAILED: {title[:40]}... (Skipping)[/red]")
-        log_rejection(user_id, title, source, url, final_score, f"Research Failed: {result.get('summary', 'Unknown error')}")
+        log_rejection(user_id, title, source, url, heuristic_score, f"Research Failed: {result.get('summary', 'Unknown error')}")
+        acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
+        return False
+
+    ai_topics = result.get("topics", [])
+    ai_score = result.get("score")
+    if ai_score is None:
+        # Fallback to a default if score wasn't returned by agent
+        ai_score = 4.0
+
+    allowed_topics = config.get("allowed", [])
+    blocked_topics = config.get("blocked", [])
+    priority_topics = {t.lower() for t in config.get("priority", [])}
+
+    # Compute actual Jaccard topic match and priority boosts based on AI-extracted topics
+    topic_match = _compute_topic_match(ai_topics, allowed_topics)
+    has_priority = any(t.lower() in priority_topics for t in ai_topics)
+    is_blocked = any(t.lower() in {b.lower() for b in blocked_topics} for t in ai_topics)
+
+    # Calculate final refined score using the AI relevance score
+    final_score = scorer.compute_final_score(scorer.RankSignals(
+        base_relevance=ai_score,
+        novelty_score=novelty_score,
+        source_quality=quality,
+        topic_match=topic_match,
+        priority_boost=1.0 if has_priority else 0.0,
+        semantic_interest_score=interest_score,
+        is_blocked=is_blocked,
+    ))
+
+    # Reject if the final refined score falls below the delivery threshold
+    if final_score < settings.delivery_threshold:
+        rprint(f"[dim]REJECT (Refined): Score {final_score:.1f} (Heuristic was {heuristic_score:.1f}): {title[:40]}...[/dim]")
+        if final_score >= 2.0:
+            log_rejection(user_id, title, source, url, final_score, "Below delivery threshold after AI refinement")
         acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
         return False
 
     article_id = save_article({
         "user_id": user_id, "source_id": article.get("source_id"), "title": title, "source_url": url, "source": source,
         "content": content, "embedding": embedding, "novelty_score": novelty_score, "event_id": event_id, "score": final_score,
-        "summary": result["summary"], "why_it_matters": result["why_it_matters"], "topics": result.get("topics", ai_topics),
+        "summary": result["summary"], "why_it_matters": result["why_it_matters"], "topics": ai_topics,
         "published_at": article.get("published_at") or None, "v2_processed": True,
     })
 
@@ -207,23 +207,33 @@ async def process_article_v2(
                 is_blocked=is_blocked,
             ))
 
-            final_score, ai_topics = await _rank_article(db, h_score, novelty_score, quality, scrubbed_title, scrubbed_content, source, config, user_id, embedding)
-
-            if final_score < settings.delivery_threshold:
-                rprint(f"[dim]REJECT: Score {final_score:.1f}: {scrubbed_title[:40]}...[/dim]")
-                if final_score >= 2.0:
-                    log_rejection(user_id, scrubbed_title, source, url, final_score, "Below delivery threshold")
+            # Early rejection gate based on heuristic score (saves LLM call costs)
+            if h_score < settings.delivery_threshold:
+                rprint(f"[dim]REJECT (Heuristic): Score {h_score:.1f}: {scrubbed_title[:40]}...[/dim]")
+                if h_score >= 2.0:
+                    log_rejection(user_id, scrubbed_title, source, url, h_score, "Heuristic below delivery threshold")
                 acknowledge_message(summarizer_main.GROUP_NAME, msg_id)
                 return False
 
             return await _research_and_persist_article(
                 loop, agent, scrubbed_content, scrubbed_title, user_id, embedding, source, url,
-                final_score, msg_id, art, novelty_score, event_id, ai_topics,
-                classification, pii_scan_status, pii_entities_found
+                h_score, msg_id, art, novelty_score, event_id,
+                classification, pii_scan_status, pii_entities_found,
+                config, quality, interest_score
             )
 
         except Exception as e:
             logger.exception(f"Failed to process V2 pipeline for '{title}': {e}")
+            try:
+                from shared.redis_client import move_to_dlq, get_retry_count
+                retries = get_retry_count(msg_id)
+                if retries > 3:
+                    logger.error(f"DLQ: Message {msg_id} failed {retries} times. Moving to DLQ.")
+                    move_to_dlq(msg_id, art, str(e))
+                else:
+                    logger.warning(f"Retry {retries}/3 for message {msg_id}")
+            except Exception as re:
+                logger.error(f"Failed to handle DLQ process: {re}")
             return False
 
 

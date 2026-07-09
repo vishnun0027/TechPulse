@@ -238,6 +238,17 @@ def run_hf_export(
     rprint("[green]Export finished.[/green]")
 
 
+@run_app.command("purge")
+def run_purge(
+    days: int = typer.Option(90, help="Retention period in days"),
+) -> None:
+    """Purge system telemetry and old processed articles."""
+    from shared.maintenance import purge_old_data
+    console.rule("[bold blue]Data Purge & Retention Service")
+    purge_old_data(days=days)
+    rprint(f"[green]Data purge older than {days} days finished.[/green]")
+
+
 # ── Tenant Management (absorbed from ops CLI) ─────────────────────────────────
 
 @tenants_app.command("list")

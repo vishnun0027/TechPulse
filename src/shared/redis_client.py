@@ -110,11 +110,42 @@ def push_to_stream(data: Dict[str, Any]) -> str:
     Returns:
         str: The Redis message ID.
     """
-    cmd = ["XADD", STREAM_RAW, "MAXLEN", "~", "500", "*"]
+    cmd = ["XADD", STREAM_RAW, "MAXLEN", "~", "2000", "*"]
     for k, v in data.items():
         cmd.append(str(k))
         cmd.append(str(v))
     return redis.execute(command=cmd)
+
+
+STREAM_DEAD = "stream:dead"
+
+
+def move_to_dlq(msg_id: str, msg_data: dict, reason: str) -> None:
+    """Moves a poisoned message to the dead letter stream."""
+    from datetime import datetime, timezone
+    data = {
+        **msg_data,
+        "_dlq_reason": reason,
+        "_dlq_time": datetime.now(timezone.utc).isoformat()
+    }
+    cmd = ["XADD", STREAM_DEAD, "MAXLEN", "~", "2000", "*"]
+    for k, v in data.items():
+        cmd.append(str(k))
+        cmd.append(str(v))
+    redis.execute(command=cmd)
+    
+    # Acknowledge in the primary consumer group
+    redis.execute(command=["XACK", STREAM_RAW, "summarizer-group", msg_id])
+
+
+def get_retry_count(msg_id: str) -> int:
+    """Tracks retry count per message using a Redis key with short TTL."""
+    key = f"retry:{msg_id}"
+    count = redis.execute(command=["INCR", key])
+    if count is not None:
+        redis.execute(command=["EXPIRE", key, "3600"])  # 1 hour TTL
+        return int(count)
+    return 1
 
 
 def ensure_group_exists(group_name: str) -> None:

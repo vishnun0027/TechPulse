@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     database_url: str = Field("", description="Supabase Direct PostgreSQL URL")
     api_base_url: str = Field("http://localhost:8000", alias="API_BASE_URL", description="Base URL of the TechPulse API server")
     encryption_key: str = Field("", alias="ENCRYPTION_KEY", description="Symmetric encryption key for DB secrets")
+    jwt_secret: str = Field("", alias="JWT_SECRET", description="JWT signing and verification secret")
     tavily_api_key: str = Field("", alias="TAVILY_API_KEY", description="Tavily Search API key")
     enable_web_search: bool = Field(False, alias="ENABLE_WEB_SEARCH", description="Toggle web search in research agent")
 
