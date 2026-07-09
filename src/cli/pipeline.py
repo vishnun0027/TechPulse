@@ -3,6 +3,7 @@ techpulse - Pipeline logic
 Contains the orchestrator and processing steps for the V2 agentic pipeline.
 """
 import asyncio
+from cachetools import TTLCache
 from typing import Any, Dict, List
 
 from loguru import logger
@@ -32,7 +33,6 @@ def _compute_topic_match(article_topics: list[str], user_allowed: list[str]) -> 
     return round(len(matches) / len(union), 4) if union else 0.5
 
 
-from cachetools import TTLCache
 USER_CENTROIDS_CACHE = TTLCache(maxsize=128, ttl=600)  # 10 minutes TTL
 
 

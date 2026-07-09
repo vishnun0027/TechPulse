@@ -16,29 +16,29 @@ def get_current_user_id(
     """
     # Check if we are running in a test, pytest, or development sandbox environment
     is_sandbox = (
-        not settings.jwt_secret 
-        or "sqlite" in settings.database_url 
-        or "pytest" in sys.modules 
+        not settings.jwt_secret
+        or "sqlite" in settings.database_url
+        or "pytest" in sys.modules
         or "PYTEST_CURRENT_TEST" in os.environ
     )
-    
+
     if not authorization or not authorization.startswith("Bearer "):
         if is_sandbox and x_user_id:
             logger.debug(f"Auth fallback: using X-User-Id header: {x_user_id}")
             return x_user_id
-            
+
         logger.warning("Request missing or invalid Authorization header")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authorization Bearer token is required.",
         )
-    
+
     try:
         parts = authorization.split(" ")
         if len(parts) != 2:
             raise jwt.InvalidTokenError("Token format must be Bearer <token>")
         token = parts[1]
-        
+
         secret = settings.jwt_secret or settings.encryption_key
         if not secret:
             logger.error("JWT_SECRET is not configured on the server")
@@ -46,7 +46,7 @@ def get_current_user_id(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Auth configuration error."
             )
-            
+
         payload = jwt.decode(token, secret, algorithms=["HS256"])
         user_id = payload.get("sub") or payload.get("user_id")
         if not user_id:

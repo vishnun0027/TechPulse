@@ -133,7 +133,7 @@ def move_to_dlq(msg_id: str, msg_data: dict, reason: str) -> None:
         cmd.append(str(k))
         cmd.append(str(v))
     redis.execute(command=cmd)
-    
+
     # Acknowledge in the primary consumer group
     redis.execute(command=["XACK", STREAM_RAW, "summarizer-group", msg_id])
 

@@ -88,7 +88,7 @@ def web_search(state: ResearchState) -> ResearchState:
             state["web_context"] = "Search returned no results."
     except Exception as e:
         logger.error(f"Tavily search context query failed: {e}")
-        state["web_context"] = f"Search query failed."
+        state["web_context"] = "Search query failed."
 
     return state
 

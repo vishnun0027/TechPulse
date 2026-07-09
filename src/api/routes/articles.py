@@ -74,7 +74,7 @@ def submit_feedback(
             "user_id": user_id,
             "signal": request.signal
         }).execute()
-        return {"status": "success", "message": f"Feedback recorded."}
+        return {"status": "success", "message": "Feedback recorded."}
     except HTTPException:
         raise
     except Exception as e:

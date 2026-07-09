@@ -50,7 +50,7 @@ app.add_middleware(
 def health_check():
     """System health check endpoint that verifies Redis + Supabase connectivity."""
     redis_healthy = ping_redis()
-    
+
     supabase_healthy = False
     try:
         # Lightweight check: Query tenant profiles count
