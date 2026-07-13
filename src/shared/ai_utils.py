@@ -102,7 +102,68 @@ def async_retry_llm_call(
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             return await func(*args, **kwargs)
-
         return wrapper
 
     return decorator
+
+
+def get_llm(model_role: str = "research", temperature: float = 0.1, api_key: str = None) -> Any:
+    """
+    Unified LLM factory returns a LangChain Chat Model.
+    If NVIDIA API key is configured, NVIDIA is used as the primary LLM provider.
+    Groq acts as a fallback using LangChain's .with_fallbacks() mechanism.
+
+    Args:
+        model_role: One of "research" (deep dive model), "summary" (summarizer model), or "fast" (fact verification model).
+        temperature: LLM generation temperature.
+        api_key: Optional override for the Groq API key (to maintain backward compatibility).
+    """
+    from langchain_openai import ChatOpenAI
+    from langchain_groq import ChatGroq
+    from shared.config import settings
+
+    # Resolve target models
+    if model_role == "research":
+        groq_model = settings.groq_research_model
+        nvidia_model = settings.nvidia_model
+    elif model_role == "summary":
+        groq_model = settings.groq_model
+        nvidia_model = settings.nvidia_model  # Fallback to Nemotron if using NVIDIA
+    elif model_role == "fast":
+        groq_model = "llama-3.1-8b-instant"
+        nvidia_model = "meta/llama-3.1-8b-instruct"
+    else:
+        groq_model = settings.groq_research_model
+        nvidia_model = settings.nvidia_model
+
+    # Instantiate Groq fallback LLM
+    g_key = api_key or settings.groq_api_key
+    fallback_llm = None
+    if g_key:
+        fallback_llm = ChatGroq(
+            model=groq_model,
+            api_key=g_key,
+            temperature=temperature,
+        )
+
+    # Instantiate NVIDIA primary LLM if key is present
+    primary_llm = None
+    if settings.nvidia_api_key:
+        primary_llm = ChatOpenAI(
+            base_url="https://integrate.api.nvidia.com/v1",
+            api_key=settings.nvidia_api_key,
+            model=nvidia_model,
+            temperature=temperature,
+        )
+
+    # Return chained fallback, or single model if only one is configured
+    if primary_llm and fallback_llm:
+        return primary_llm.with_fallbacks([fallback_llm])
+    elif primary_llm:
+        return primary_llm
+    elif fallback_llm:
+        return fallback_llm
+    else:
+        # Emergency default fallback (will raise error on invocation if keys are missing)
+        return ChatGroq(model=groq_model, api_key="", temperature=temperature)
+

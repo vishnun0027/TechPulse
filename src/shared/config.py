@@ -17,7 +17,15 @@ class Settings(BaseSettings):
         "llama-3.1-8b-instant", description="Model ID to use for summarization"
     )
     groq_research_model: str = Field(
-        "qwen/qwen3-32b", description="Model ID to use for deep-dive research"
+        "meta-llama/llama-4-scout-17b-16e-instruct", description="Model ID to use for deep-dive research"
+    )
+
+    # NVIDIA AI Settings
+    nvidia_api_key: str = Field(
+        "", alias="NVIDIA_API_KEY", description="API key for NVIDIA API Catalog (Optional)"
+    )
+    nvidia_model: str = Field(
+        "meta/llama-3.3-70b-instruct", alias="NVIDIA_MODEL", description="Model ID to use for NVIDIA LLM"
     )
 
     # Supabase Settings (Backend Data & Auth)

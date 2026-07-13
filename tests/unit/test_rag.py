@@ -12,8 +12,8 @@ TEST_USER_ID = "ab05c507-fd62-44c4-80de-c1b2ae4f0bf2"
 @patch("shared.redis_client.set_cached_rag")
 @patch("services.agents.rag_agent.embed_text")
 @patch("api.routes.search.supabase")
-@patch("services.agents.rag_agent.ChatGroq")
-def test_rag_search_success(mock_chat_groq, mock_supabase, mock_embed, mock_set_cache, mock_get_cache):
+@patch("services.agents.rag_agent.get_llm")
+def test_rag_search_success(mock_get_llm, mock_supabase, mock_embed, mock_set_cache, mock_get_cache):
     # Mock query embedding generation
     mock_embed.return_value = [0.1] * 768
 
@@ -31,7 +31,7 @@ def test_rag_search_success(mock_chat_groq, mock_supabase, mock_embed, mock_set_
     ]
     mock_supabase.rpc.return_value = mock_rpc_res
 
-    # Mock ChatGroq model instance behavior
+    # Mock get_llm return model instance behavior
     mock_llm_instance = MagicMock()
     mock_llm_instance.invoke.return_value = AIMessage(
         content="Based on your articles, AI agents are indeed growing smarter [1]."
@@ -39,7 +39,7 @@ def test_rag_search_success(mock_chat_groq, mock_supabase, mock_embed, mock_set_
     mock_llm_instance.return_value = AIMessage(
         content="Based on your articles, AI agents are indeed growing smarter [1]."
     )
-    mock_chat_groq.return_value = mock_llm_instance
+    mock_get_llm.return_value = mock_llm_instance
 
     headers = {"X-User-Id": TEST_USER_ID}
     response = client.post("/search/rag", json={"query": "Tell me about AI agents"}, headers=headers)

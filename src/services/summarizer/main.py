@@ -26,15 +26,11 @@ _chain = None
 
 
 def get_llm():
-    """Lazy initializer for the Groq LLM."""
+    """Lazy initializer for the LLM (NVIDIA primary with Groq fallback)."""
     global _llm
     if _llm is None:
-        _llm = ChatGroq(
-            api_key=settings.groq_api_key,
-            model=settings.groq_model,
-            temperature=0.3,
-            max_tokens=220,
-        )
+        from shared.ai_utils import get_llm as factory_get_llm
+        _llm = factory_get_llm(model_role="summary", temperature=0.3)
     return _llm
 
 

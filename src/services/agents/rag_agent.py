@@ -1,5 +1,5 @@
 from langgraph.graph import StateGraph, END
-from langchain_groq import ChatGroq
+from shared.ai_utils import get_llm
 from typing import TypedDict, List, Dict, Any, Optional
 from supabase import Client
 from loguru import logger
@@ -97,9 +97,7 @@ def synthesize_answer_node(state: RAGSearchState, groq_api_key: str) -> RAGSearc
         ("human", "CONTEXT:\n{context}\n\nQUERY: {query}")
     ])
 
-    llm = ChatGroq(
-        model=settings.groq_research_model, api_key=groq_api_key, temperature=0.2
-    )
+    llm = get_llm(model_role="research", temperature=0.2, api_key=groq_api_key)
 
     chain = prompt | llm | StrOutputParser()
 

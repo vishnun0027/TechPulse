@@ -164,10 +164,9 @@ def _execute_summary_chain(
 
 def build_summary(state: ResearchState, groq_api_key: str) -> ResearchState:
     """Node 2: RAG-enhanced summarization with historical context."""
-    # Use high-capacity model for research (default: Qwen 32B for rate-limit efficiency)
-    llm = ChatGroq(
-        model=settings.groq_research_model, api_key=groq_api_key, temperature=0.1
-    )
+    # Use high-capacity model for research (NVIDIA primary, Groq fallback)
+    from shared.ai_utils import get_llm
+    llm = get_llm(model_role="research", temperature=0.1, api_key=groq_api_key)
     parser = JsonOutputParser(pydantic_object=ArticleAnalysis)
 
     try:
@@ -214,10 +213,9 @@ def verify_facts(state: ResearchState, groq_api_key: str) -> ResearchState:
     if state.get("research_failed"):
         return state
 
-    # Use a fast, cost-efficient model for auditing
-    llm = ChatGroq(
-        model="llama-3.1-8b-instant", api_key=groq_api_key, temperature=0.0
-    )
+    # Use a fast, cost-efficient model for auditing (NVIDIA primary, Groq fallback)
+    from shared.ai_utils import get_llm
+    llm = get_llm(model_role="fast", temperature=0.0, api_key=groq_api_key)
 
     prompt = ChatPromptTemplate.from_messages(
         [
