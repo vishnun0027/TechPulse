@@ -1,6 +1,5 @@
 import asyncio
 from typing import List, Dict, Any, Union, Optional
-from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from loguru import logger
