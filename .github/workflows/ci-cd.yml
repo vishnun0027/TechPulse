@@ -82,5 +82,5 @@ jobs:
               git reset --hard HEAD
               git pull origin main
             fi
-            chmod +x scripts/cicd.sh
-            ./scripts/cicd.sh --cd-only
+            chmod +x scripts/deploy.sh
+            ./scripts/deploy.sh

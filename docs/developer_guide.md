@@ -85,12 +85,30 @@ A Redis-backed rate-limiting middleware limits public requests on the `/click` a
 
 ---
 
-## ⚙️ Operations & Cloudflare Tunnel Deployment
+## ⚙️ Operations & Production Deployment
 
-In production, the API server runs locally on the VM (via `techpulse-api.service` systemd daemon on port `8089`). It is exposed securely to the internet without open ports using a **Cloudflare Tunnel** (`cloudflared`):
+In production, the API server and scheduled task timers run under the systemd user manager (`systemctl --user`). The API runs locally on port `8089` and is exposed securely using a **Cloudflare Tunnel** (`cloudflared`):
 1. Routes requests to `https://pulse-api.nullnex.com`.
 2. Hides the VM's public IP address entirely.
 3. Automatically provides and renews edge SSL/HTTPS certificates.
+
+### Automated CI/CD
+The project is deployed automatically to the production VM via GitHub Actions when changes are merged into `main`. The workflow is located at [.github/workflows/ci-cd.yml](file://../.github/workflows/ci-cd.yml).
+
+### Unified Deployment Script
+All deployment steps are encapsulated in [scripts/deploy.sh](file://../scripts/deploy.sh):
+- **Dependencies**: Runs `uv sync --frozen` to prepare the isolated virtual environment.
+- **Database Migrations**: Runs `uv run python scripts/migrate.py` to keep database schema up to date.
+- **Systemd User Configuration**: Templates the service and timer files dynamically (replacing absolute directories and omitting explicit User/Group boundaries for systemd --user manager mode) and copies them to `~/.config/systemd/user/`.
+- **Linger Activation**: Keeps user services alive after the SSH session disconnects.
+- **Service Management**: Restarts `techpulse-collector.timer`, `techpulse-pulse.timer`, `techpulse-archive.timer`, `techpulse-keepalive.timer`, `techpulse-purge.timer`, and `techpulse-api.service`.
+- **Health Check**: Runs a health loop against `http://localhost:8089/health` to verify success.
+
+To trigger a manual deploy on the VM, execute:
+```bash
+chmod +x scripts/deploy.sh
+./scripts/deploy.sh
+```
 
 ---
 

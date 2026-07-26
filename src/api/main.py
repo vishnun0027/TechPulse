@@ -9,10 +9,16 @@ from shared.db import supabase
 from loguru import logger
 import urllib.parse
 
+# Disable Swagger UI and ReDoc in production to prevent API surface exposure
+_is_local = "localhost" in settings.api_base_url or "127.0.0.1" in settings.api_base_url
+
 app = FastAPI(
     title="TechPulse API",
     description="REST API for TechPulse curated intelligence and management.",
     version="0.1.0",
+    docs_url="/docs" if _is_local else None,
+    redoc_url="/redoc" if _is_local else None,
+    openapi_url="/openapi.json" if _is_local else None,
 )
 
 # Configure Rate Limiting
